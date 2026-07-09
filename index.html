@@ -291,4 +291,11 @@ function toast(msg, warn){
 function boot(){
   if(!cfg()){ document.getElementById('app').style.display='none';
     document.getElementById('setup').style.display='block'; return }
-  refresh().then(()=>{ if(state.schema){ state.dagIdx=vandaagIdx(); ren
+  refresh().then(()=>{ if(state.schema){ state.dagIdx=vandaagIdx(); render(); } });
+}
+boot();
+window.addEventListener('online', flushQueue);
+if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script>
+</body>
+</html>
