@@ -100,6 +100,7 @@
     <div class="switch">
       <button id="swT" class="on" onclick="setView('training')">Training</button>
       <button id="swE" onclick="setView('eiwit')">Eiwit</button>
+      <button id="swR" onclick="setView('trends')">Trends</button>
     </div>
   </header>
   <div class="tabs" id="tabs"></div>
@@ -115,7 +116,7 @@
 
 <script>
 const LS = localStorage;
-const state = { schema:null, oef:null, voeding:null, log:{entries:[]}, dagIdx:0, view:'training' };
+const state = { schema:null, oef:null, voeding:null, trends:null, log:{entries:[]}, dagIdx:0, view:'training' };
 
 /* ---------- config ---------- */
 function cfg(){ try{ return JSON.parse(LS.getItem('cfg'))||null }catch(e){ return null } }
@@ -165,6 +166,8 @@ async function refresh(force){
     LS.setItem('cache.oef', JSON.stringify(oef.oefeningen));
     try{ state.voeding = await getJson('voeding.json'); LS.setItem('cache.voeding', JSON.stringify(state.voeding)); }
     catch(e){ state.voeding = JSON.parse(LS.getItem('cache.voeding')||'null'); }
+    try{ state.trends = await getJson('trends.json'); LS.setItem('cache.trends', JSON.stringify(state.trends)); }
+    catch(e){ state.trends = JSON.parse(LS.getItem('cache.trends')||'null'); }
     try{ state.log = await getJson('logs/'+schema.id+'.json') }
     catch(e){ state.log = {schema:schema.id, entries:[]} }
     LS.setItem('cache.log', JSON.stringify(state.log));
@@ -175,6 +178,7 @@ async function refresh(force){
     const s = LS.getItem('cache.schema');
     if(s){ state.schema=JSON.parse(s); state.oef=JSON.parse(LS.getItem('cache.oef')||'{}');
            state.voeding=JSON.parse(LS.getItem('cache.voeding')||'null');
+           state.trends=JSON.parse(LS.getItem('cache.trends')||'null');
            state.log=JSON.parse(LS.getItem('cache.log')||'{"entries":[]}');
            render(); toast('Offline — cache gebruikt'); }
     else if(String(e).includes('401')||String(e).includes('404')){
@@ -239,10 +243,12 @@ function render(){
   periode.textContent = state.schema.periode + (state.schema.locatie? ' · '+state.schema.locatie:'');
   document.getElementById('swT').className = state.view==='training'?'on':'';
   document.getElementById('swE').className = state.view==='eiwit'?'on':'';
+  document.getElementById('swR').className = state.view==='trends'?'on':'';
   tabs.style.display = state.view==='training' ? 'flex':'none';
   stoplicht.style.display = state.view==='training' ? 'block':'none';
   stoplicht.textContent = state.schema.stoplicht||'';
   if(state.view==='eiwit'){ renderEiwit(); return; }
+  if(state.view==='trends'){ renderTrends(); return; }
   tabs.innerHTML='';
   state.schema.dagen.forEach((d,i)=>{
     const b=document.createElement('button');
@@ -358,6 +364,90 @@ function addEiwitVrij(){
   render();
 }
 function annuleer(ts){ addEntry({type:'annuleer', datum:localDate(), ref:ts}); render(); }
+
+/* ---------- trends ---------- */
+function spark(punten, opts={}){
+  if(!punten.length) return '<div class="hist">nog geen data</div>';
+  const W=300,H=110,P=16;
+  const ys=punten.map(p=>p.y);
+  let min=Math.min(...ys), max=Math.max(...ys);
+  if(opts.doel!=null){ min=Math.min(min,opts.doel); max=Math.max(max,opts.doel); }
+  if(max-min<1) max=min+1;
+  const pad=(max-min)*0.12; min-=pad; max+=pad;
+  const X=i=>punten.length>1? P+i*(W-2*P)/(punten.length-1) : W/2;
+  const Y=v=>H-P-(v-min)*(H-2*P)/(max-min);
+  let s=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;display:block">`;
+  if(opts.doel!=null) s+=`<line x1="${P}" y1="${Y(opts.doel).toFixed(1)}" x2="${W-P}" y2="${Y(opts.doel).toFixed(1)}" stroke="var(--green)" stroke-width="1.5" stroke-dasharray="4 4"/>
+    <text x="${W-P}" y="${(Y(opts.doel)-4).toFixed(1)}" fill="var(--green)" font-size="9" text-anchor="end">doel ${opts.doel}</text>`;
+  if(punten.length>1){
+    const pts=punten.map((p,i)=>X(i).toFixed(1)+','+Y(p.y).toFixed(1)).join(' ');
+    s+=`<polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`;
+  }
+  punten.forEach((p,i)=>{ s+=`<circle cx="${X(i).toFixed(1)}" cy="${Y(p.y).toFixed(1)}" r="3.5" fill="var(--accent)"/>`; });
+  const f=punten[0], l=punten[punten.length-1];
+  s+=`<text x="${P}" y="${H-2}" fill="var(--muted)" font-size="9">${f.l||''}</text>
+    <text x="${W-P}" y="${H-2}" fill="var(--muted)" font-size="9" text-anchor="end">${l.l||''}</text>
+    <text x="${X(punten.length-1).toFixed(1)}" y="${(Y(l.y)-8).toFixed(1)}" fill="var(--text)" font-size="10" text-anchor="end">${l.y}</text></svg>`;
+  return s;
+}
+function dl(d){ return d.slice(8)+'/'+d.slice(5,7); }
+function renderTrends(){
+  const tr=state.trends||{}; const ann=annulled();
+  // lichaamsgewicht
+  const histKg=(tr.gewicht&&tr.gewicht.punten)||[];
+  const kseen=new Set(histKg.map(p=>p.d));
+  const liveKg=state.log.entries.filter(x=>x.type==='lichaamsgewicht'&&!ann.has(x.ts)&&!kseen.has(x.datum)).map(x=>({d:x.datum,kg:x.kg}));
+  const kg=histKg.concat(liveKg).sort((a,b)=>a.d<b.d?-1:1);
+  const doelKg=(tr.gewicht&&tr.gewicht.doel)||90;
+  let h=`<div class="card"><p class="focus">Lichaamsgewicht</p>
+    <div class="meta">${kg.length? 'laatste: '+kg[kg.length-1].kg+' kg':'nog geen meting'} · doel ${doelKg} kg</div>
+    ${spark(kg.map(p=>({y:p.kg,l:dl(p.d)})),{doel:doelKg})}
+    <div class="sec">Nieuw weegmoment</div>
+    <div class="logrow"><input id="kgIn" type="number" inputmode="decimal" step="0.1" placeholder="kg">
+    <button class="ghost" onclick="logKg()">Opslaan</button></div>
+    <div class="hist">Weeg 1×/week, zaterdagochtend, zelfde moment — kijk naar de trend, niet de dagschommeling.</div></div>`;
+  // eiwit per dag
+  const histE=(tr.eiwit&&tr.eiwit.punten)||[];
+  const eseen=new Set(histE.map(p=>p.d));
+  const perDag={};
+  state.log.entries.filter(x=>x.type==='eiwit'&&!ann.has(x.ts)&&x.eiwit!=null).forEach(x=>{ perDag[x.datum]=(perDag[x.datum]||0)+x.eiwit; });
+  const liveE=Object.keys(perDag).filter(d=>!eseen.has(d)).map(d=>({d,g:Math.round(perDag[d])}));
+  const eiw=histE.concat(liveE).sort((a,b)=>a.d<b.d?-1:1).slice(-14);
+  h+=`<div class="card"><p class="focus">Eiwit per dag</p><div class="meta">laatste 14 dagen</div>
+    ${spark(eiw.map(p=>({y:p.g,l:dl(p.d)})),{doel:state.schema.eiwitDoel||130})}</div>`;
+  // krachtprogressie
+  h+='<div class="card"><p class="focus">Krachtprogressie</p>';
+  const kr={};
+  Object.entries(tr.kracht||{}).forEach(([id,v])=>{ kr[id]={naam:v.naam,punten:v.punten.slice()}; });
+  state.log.entries.filter(x=>x.type==='gewicht'&&!ann.has(x.ts)).forEach(x=>{
+    const naam=(state.oef[x.oefening]||{}).naam||x.oefening;
+    kr[x.oefening]=kr[x.oefening]||{naam,punten:[]};
+    if(!kr[x.oefening].punten.some(p=>p.d===x.datum&&p.kg===x.gewicht)) kr[x.oefening].punten.push({d:x.datum,kg:x.gewicht});
+  });
+  const ids=Object.keys(kr);
+  if(!ids.length) h+='<div class="hist">Log gewichten bij je oefeningen — hier verschijnt je progressie.</div>';
+  ids.forEach(id=>{
+    const v=kr[id]; v.punten.sort((a,b)=>a.d<b.d?-1:1);
+    const l=v.punten[v.punten.length-1];
+    h+=`<div class="sec">${v.naam} — ${l.kg} kg</div>`;
+    h+= v.punten.length>1? spark(v.punten.map(p=>({y:p.kg,l:dl(p.d)}))) : '<div class="hist">1 meting — grafiek volgt bij de volgende</div>';
+  });
+  h+='</div>';
+  // weekoverzicht (vult de nachtelijke taak)
+  const ses=(tr.sessies&&tr.sessies.punten)||[], lop=(tr.lopen&&tr.lopen.punten)||[];
+  h+='<div class="card"><p class="focus">Weekoverzicht</p>';
+  h+= ses.length? '<div class="sec">Sessies gedaan per week</div>'+spark(ses.map(p=>({y:p.gedaan,l:p.week.slice(5)}))) :
+    '<div class="hist">Sessietrouw en loopvolume verschijnen na de eerste weekafsluiting (zondagnacht).</div>';
+  if(lop.length) h+='<div class="sec">Loopvolume (km/week)</div>'+spark(lop.map(p=>({y:p.km,l:p.week.slice(5)})));
+  h+='</div>';
+  main.innerHTML=h;
+}
+function logKg(){
+  const v=parseFloat(document.getElementById('kgIn').value);
+  if(!v||v<50||v>150){ toast('Geef een realistisch gewicht in kg'); return }
+  addEntry({type:'lichaamsgewicht', datum:localDate(), kg:v});
+  render();
+}
 
 function vink(datum){
   if(sessieGedaan(datum)){ toast('Al afgevinkt'); return }
