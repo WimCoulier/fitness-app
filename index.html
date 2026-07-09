@@ -131,6 +131,7 @@ function saveCfg(){
 function api(path, opts={}){
   const c = cfg();
   return fetch(`https://api.github.com/repos/${c.owner}/${c.repo}/contents/${path}`, {
+    cache: 'no-store',
     ...opts,
     headers: {
       'Authorization':'Bearer '+c.token,
@@ -154,7 +155,7 @@ async function putJson(path, obj, msg, poging=0){
   if(sha) body.sha = sha;
   const r = await api(path, {method:'PUT', raw:false, body: JSON.stringify(body)});
   if(!r.ok){
-    if(r.status===409 && poging<2) return putJson(path, obj, msg, poging+1);
+    if((r.status===409 || r.status===422) && poging<2) return putJson(path, obj, msg, poging+1);
     let det=''; try{ det=(await r.json()).message||'' }catch(e){}
     throw new Error('PUT '+path+': HTTP '+r.status+(det? ' — '+det:''));
   }
