@@ -367,8 +367,9 @@ function renderEiwit(){
   if(es.length){
     h+='<div class="sec">Gelogd op deze dag</div>';
     es.slice().reverse().forEach(e=>{
-      h+=`<div class="entry"><span>${e.naam}${e.gram? ' · '+e.gram+' g':''}</span><span>${e.eiwit!=null? (e.geschat?'≈':'')+e.eiwit+' g':'?'}${e.kcal!=null? ' · '+e.kcal+' kcal':''}</span><button onclick="annuleer('${e.ts}')">✕</button></div>`;
+      h+=`<div class="entry"><span onclick="openEiwitBewerk('${e.ts}')">${e.naam}${e.gram? ' · '+e.gram+' g':''}</span><span onclick="openEiwitBewerk('${e.ts}')">${e.eiwit!=null? (e.geschat?'≈':'')+e.eiwit+' g':'?'}${e.kcal!=null? ' · '+e.kcal+' kcal':''}</span><button onclick="annuleer('${e.ts}')">✕</button></div>`;
     });
+    h+='<div class="hist">Tik een regel om ze aan te passen.</div>';
   }
   h+='</div><div class="card"><p class="focus">Snel toevoegen</p><div class="meta">Tik een item en pas het gewicht aan</div>';
   ((state.voeding&&state.voeding.groepen)||[]).forEach(g=>{
@@ -445,6 +446,55 @@ function addEiwitVrij(){
   if(!isNaN(k)){ entry.kcalPer100g=k; if(!isNaN(g)) entry.kcal=Math.round(g*k/100); }
   addEntry(entry);
   render();
+}
+let eiwitBewerkTs=null;
+function openEiwitBewerk(ts){
+  const e=state.log.entries.find(x=>x.ts===ts); if(!e) return;
+  eiwitBewerkTs=ts;
+  const it=e.item? vindItem(e.item):null;
+  const p100e=(e.eiwitPer100g!=null)? e.eiwitPer100g : (it? it.eiwitPer100g:null);
+  const p100k=(e.kcalPer100g!=null)? e.kcalPer100g : (it&&it.kcalPer100g!=null? it.kcalPer100g:null);
+  sheet.innerHTML=`<button class="xclose" type="button" onclick="closeSheet()">✕</button>
+    <h2>Aanpassen</h2>
+    <div class="sec">Omschrijving</div>
+    <div class="logrow"><input id="bNaam" value="${(e.naam||'').replace(/"/g,'&quot;')}"></div>
+    <div class="sec">Gewicht (g)</div>
+    <div class="logrow"><input id="bGram" type="number" inputmode="decimal" value="${e.gram!=null? e.gram:''}"></div>
+    <div class="sec">Eiwit (g) · kcal</div>
+    <div class="logrow"><input id="bEiwit" type="number" inputmode="decimal" value="${e.eiwit!=null? e.eiwit:''}">
+    <input id="bKcal" type="number" inputmode="decimal" value="${e.kcal!=null? e.kcal:''}"></div>
+    ${p100e!=null? '<div class="hist">Gewicht aanpassen herrekent eiwit'+(p100k!=null?' en kcal':'')+' automatisch (zelf overschrijven mag).</div>':''}
+    <button class="primary" type="button" onclick="bewaarEiwitBewerk()">Opslaan</button>
+    <button class="ghost" type="button" style="width:100%;margin-top:8px" onclick="closeSheet()">Annuleren</button>`;
+  sheetWrap.style.display='block';
+  if(p100e!=null){
+    document.getElementById('bGram').addEventListener('input',()=>{
+      const g=parseFloat(document.getElementById('bGram').value);
+      if(!isNaN(g)){
+        document.getElementById('bEiwit').value=Math.round(g*p100e/100);
+        if(p100k!=null) document.getElementById('bKcal').value=Math.round(g*p100k/100);
+      }
+    });
+  }
+}
+function bewaarEiwitBewerk(){
+  const oud=state.log.entries.find(x=>x.ts===eiwitBewerkTs);
+  if(!oud){ closeSheet(); return }
+  const naam=document.getElementById('bNaam').value.trim()||oud.naam;
+  const g=parseFloat(document.getElementById('bGram').value);
+  const e=parseFloat(document.getElementById('bEiwit').value);
+  const k=parseFloat(document.getElementById('bKcal').value);
+  const nieuw={type:'eiwit', datum:oud.datum, naam};
+  if(oud.item) nieuw.item=oud.item;
+  if(oud.eiwitPer100g!=null) nieuw.eiwitPer100g=oud.eiwitPer100g;
+  if(oud.kcalPer100g!=null) nieuw.kcalPer100g=oud.kcalPer100g;
+  if(!isNaN(g)) nieuw.gram=g; else if(oud.gram!=null) nieuw.gram=oud.gram;
+  nieuw.eiwit=isNaN(e)? null : e;
+  nieuw.kcal=isNaN(k)? null : k;
+  addEntry({type:'annuleer', datum:oud.datum, ref:oud.ts});
+  addEntry(nieuw);
+  eiwitBewerkTs=null;
+  closeSheet(); render();
 }
 function annuleer(ts){ addEntry({type:'annuleer', datum:localDate(), ref:ts}); render(); }
 
@@ -563,7 +613,7 @@ function vink(datum){
 }
 
 /* ---------- detail sheet (oefening + rondes) ---------- */
-let curEx=null, curDatum=null, curVariant=null;
+let curEx=null, curDatum=null, curVariant=null, rondeBewerkTs=null;
 function fmtRonde(r, ex){
   let s='R'+(r.ronde||'?')+': ';
   if(r.reps!=null) s+=r.reps+((ex.meting==='sec')?' sec':'×');
@@ -582,7 +632,7 @@ function kiesVariant(el,v){
   el.classList.add('on');
 }
 function openSheet(id, datum){
-  curEx=id; curDatum=datum; curVariant=null;
+  curEx=id; curDatum=datum; curVariant=null; rondeBewerkTs=null;
   renderOefSheet();
   sheetWrap.style.display='block';
 }
@@ -610,14 +660,16 @@ function renderOefSheet(){
     }
     if(vandaag.length){
       h+='<div class="sec">Vandaag</div>';
-      vandaag.forEach(r=>{ h+=`<div class="entry"><span>${fmtRonde(r,ex)}</span><button type="button" onclick="annuleerRonde('${r.ts}')">✕</button></div>`; });
+      vandaag.forEach(r=>{ h+=`<div class="entry"><span onclick="startRondeBewerk('${r.ts}')">${fmtRonde(r,ex)}</span><button type="button" onclick="annuleerRonde('${r.ts}')">✕</button></div>`; });
+      h+='<div class="hist">Tik een ronde om ze aan te passen.</div>';
     }
-    const nr=vandaag.length+1;
-    h+=`<div class="sec">Ronde ${nr} loggen</div>
+    const be = rondeBewerkTs? vandaag.find(r=>r.ts===rondeBewerkTs) : null;
+    const nr = be? (be.ronde||'?') : vandaag.length+1;
+    h+=`<div class="sec">Ronde ${nr} ${be?'aanpassen':'loggen'}</div>
       <div class="logrow">
-        <input id="rIn" type="number" inputmode="numeric" placeholder="${meting==='sec'?'seconden':'aantal herhalingen'}">`;
+        <input id="rIn" type="number" inputmode="numeric" placeholder="${meting==='sec'?'seconden':'aantal herhalingen'}"${be&&be.reps!=null? ' value="'+be.reps+'"':''}>`;
     if(ex.logGewicht){
-      const kg=laatsteKg(id);
+      const kg = (be&&be.gewicht!=null)? be.gewicht : laatsteKg(id);
       h+=`<input id="rKg" type="number" inputmode="decimal" step="0.5" placeholder="kg"${kg? ' value="'+kg+'"':''}>`;
     }
     h+='</div>';
@@ -626,11 +678,18 @@ function renderOefSheet(){
       h+='<div class="chips" style="margin-top:8px">'+ex.varianten.map(v=>
         `<button type="button" class="chip${v===gv?' on':''}" onclick="kiesVariant(this,'${v}')">${v}</button>`).join('')+'</div>';
     }
-    h+=`<button class="primary" type="button" onclick="logRonde()">Ronde ${nr} opslaan</button>
-      <div class="hist">⏱ Rust 60–90 sec voor je aan de volgende ronde begint.</div>`;
+    h+=`<button class="primary" type="button" onclick="logRonde()">Ronde ${nr} ${be?'bijwerken':'opslaan'}</button>`;
+    if(be) h+=`<button class="ghost" type="button" style="width:100%;margin-top:8px" onclick="rondeBewerkTs=null;renderOefSheet()">Stop met aanpassen</button>`;
+    h+=`<div class="hist">⏱ Rust 60–90 sec voor je aan de volgende ronde begint.</div>`;
   }
   h+='<button class="ghost" type="button" style="width:100%;margin-top:10px" onclick="closeSheet()">Sluiten</button>';
   sheet.innerHTML=h;
+}
+function startRondeBewerk(ts){
+  const r=rondeEntries(curEx).find(x=>x.ts===ts); if(!r) return;
+  rondeBewerkTs=ts;
+  if(r.variant) curVariant=r.variant;
+  renderOefSheet();
 }
 function logRonde(){
   const ex=state.oef[curEx]; const meting=ex.meting||'reps';
@@ -638,6 +697,11 @@ function logRonde(){
   if(isNaN(n)||n<=0){ toast(meting==='sec'?'Geef het aantal seconden in':'Geef het aantal herhalingen in'); return }
   const entry={type:'ronde', datum:curDatum, oefening:curEx,
     ronde:rondeEntries(curEx).filter(r=>r.datum===curDatum).length+1, reps:n};
+  if(rondeBewerkTs){
+    const oud=rondeEntries(curEx).find(r=>r.ts===rondeBewerkTs);
+    if(oud){ entry.ronde=oud.ronde; addEntry({type:'annuleer', datum:curDatum, ref:oud.ts}); }
+    rondeBewerkTs=null;
+  }
   const kgEl=document.getElementById('rKg');
   if(kgEl){ const kg=parseFloat(kgEl.value); if(!isNaN(kg)&&kg>0) entry.gewicht=kg; }
   const v=gekozenVariant(curEx);
