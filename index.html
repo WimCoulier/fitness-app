@@ -49,6 +49,17 @@
   .sec{font-size:.8rem; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:14px 0 4px}
   .illu{background:#eef6fb; border-radius:14px; margin:8px 0 2px; padding:4px}
   .illu svg{width:100%; height:auto; display:block}
+  .switch{display:flex; gap:6px; margin-top:10px}
+  .switch button{flex:1; padding:9px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--text); font-size:.9rem}
+  .switch button.on{background:var(--accent); color:#082f49; font-weight:700; border-color:var(--accent)}
+  .bar{height:10px; background:var(--card2); border-radius:6px; margin:10px 0 4px; overflow:hidden}
+  .bar div{height:100%; border-radius:6px; transition:width .3s}
+  .chips{display:flex; flex-wrap:wrap; gap:6px}
+  .chip{background:var(--card2); border:1px solid var(--line); color:var(--text); border-radius:10px; padding:8px 10px; font-size:.82rem}
+  .chip b{color:var(--accent); font-weight:700}
+  .entry{display:flex; align-items:center; gap:8px; background:var(--card2); border-radius:10px; padding:8px 10px; margin-top:6px; font-size:.88rem}
+  .entry span:first-child{flex:1}
+  .entry button{background:none; border:0; color:var(--muted); font-size:1rem; padding:2px 6px}
   .uitleg{font-size:.95rem; line-height:1.55}
   .logrow{display:flex; gap:8px; margin-top:8px}
   .logrow input{flex:1; background:var(--card2); border:1px solid var(--line); border-radius:12px;
@@ -86,6 +97,10 @@
   <header>
     <h1 id="titel">Training</h1>
     <div class="sub" id="periode"></div>
+    <div class="switch">
+      <button id="swT" class="on" onclick="setView('training')">Training</button>
+      <button id="swE" onclick="setView('eiwit')">Eiwit</button>
+    </div>
   </header>
   <div class="tabs" id="tabs"></div>
   <main id="main"></main>
@@ -100,7 +115,7 @@
 
 <script>
 const LS = localStorage;
-const state = { schema:null, oef:null, log:{entries:[]}, dagIdx:0 };
+const state = { schema:null, oef:null, voeding:null, log:{entries:[]}, dagIdx:0, view:'training' };
 
 /* ---------- config ---------- */
 function cfg(){ try{ return JSON.parse(LS.getItem('cfg'))||null }catch(e){ return null } }
@@ -148,6 +163,8 @@ async function refresh(force){
     state.schema = schema; state.oef = oef.oefeningen;
     LS.setItem('cache.schema', JSON.stringify(schema));
     LS.setItem('cache.oef', JSON.stringify(oef.oefeningen));
+    try{ state.voeding = await getJson('voeding.json'); LS.setItem('cache.voeding', JSON.stringify(state.voeding)); }
+    catch(e){ state.voeding = JSON.parse(LS.getItem('cache.voeding')||'null'); }
     try{ state.log = await getJson('logs/'+schema.id+'.json') }
     catch(e){ state.log = {schema:schema.id, entries:[]} }
     LS.setItem('cache.log', JSON.stringify(state.log));
@@ -157,6 +174,7 @@ async function refresh(force){
     // offline of fout → cache gebruiken
     const s = LS.getItem('cache.schema');
     if(s){ state.schema=JSON.parse(s); state.oef=JSON.parse(LS.getItem('cache.oef')||'{}');
+           state.voeding=JSON.parse(LS.getItem('cache.voeding')||'null');
            state.log=JSON.parse(LS.getItem('cache.log')||'{"entries":[]}');
            render(); toast('Offline — cache gebruikt'); }
     else if(String(e).includes('401')||String(e).includes('404')){
@@ -202,11 +220,16 @@ function laatsteGewicht(oefId){
   return null;
 }
 function sessieGedaan(datum){ return state.log.entries.some(x=>x.type==='sessie'&&x.datum===datum) }
+function localDate(){
+  const d=new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
 function vandaagIdx(){
-  const t = new Date().toISOString().slice(0,10);
+  const t = localDate();
   const i = state.schema.dagen.findIndex(d=>d.datum===t);
   return i>=0 ? i : 0;
 }
+function setView(v){ state.view=v; render(); }
 
 /* ---------- render ---------- */
 const DAGEN = {ma:'Ma',di:'Di',wo:'Wo',do:'Do',vr:'Vr',za:'Za',zo:'Zo'};
@@ -214,7 +237,12 @@ function render(){
   document.getElementById('setup').style.display='none';
   document.getElementById('app').style.display='block';
   periode.textContent = state.schema.periode + (state.schema.locatie? ' · '+state.schema.locatie:'');
+  document.getElementById('swT').className = state.view==='training'?'on':'';
+  document.getElementById('swE').className = state.view==='eiwit'?'on':'';
+  tabs.style.display = state.view==='training' ? 'flex':'none';
+  stoplicht.style.display = state.view==='training' ? 'block':'none';
   stoplicht.textContent = state.schema.stoplicht||'';
+  if(state.view==='eiwit'){ renderEiwit(); return; }
   tabs.innerHTML='';
   state.schema.dagen.forEach((d,i)=>{
     const b=document.createElement('button');
@@ -243,6 +271,57 @@ function render(){
   h+=`<button class="primary${done?' done':''}" onclick="vink('${d.datum}')">${done?'✓ Sessie gedaan':'Sessie afvinken'}</button></div>`;
   main.innerHTML=h;
 }
+/* ---------- eiwit ---------- */
+function annulled(){ return new Set(state.log.entries.filter(x=>x.type==='annuleer').map(x=>x.ref)); }
+function eiwitVandaag(){
+  const t=localDate(), ann=annulled();
+  return state.log.entries.filter(x=>x.type==='eiwit'&&x.datum===t&&!ann.has(x.ts));
+}
+function renderEiwit(){
+  const doel=state.schema.eiwitDoel||130;
+  const es=eiwitVandaag();
+  const tot=Math.round(es.reduce((s,x)=>s+(x.eiwit||0),0));
+  const unk=es.filter(x=>x.eiwit==null).length;
+  const pct=Math.min(100, tot/doel*100);
+  const kleur= tot>=doel*0.9 ? 'var(--green)' : 'var(--accent)';
+  let h=`<div class="card"><p class="focus">Eiwit vandaag</p>
+    <div class="meta">doel ${doel} g per dag</div>
+    <div style="font-size:2rem;font-weight:700">${tot} <span style="font-size:1rem;color:var(--muted)">/ ${doel} g${unk? ' (+'+unk+' te schatten)':''}</span></div>
+    <div class="bar"><div style="width:${pct}%;background:${kleur}"></div></div>`;
+  if(es.length){
+    h+='<div class="sec">Vandaag gelogd</div>';
+    es.slice().reverse().forEach(e=>{
+      h+=`<div class="entry"><span>${e.naam}</span><span>${e.eiwit!=null? e.eiwit+' g':'?'}</span><button onclick="annuleer('${e.ts}')">✕</button></div>`;
+    });
+  }
+  h+='</div><div class="card"><p class="focus">Snel toevoegen</p>';
+  ((state.voeding&&state.voeding.groepen)||[]).forEach(g=>{
+    h+=`<div class="sec">${g.naam}</div><div class="chips">`;
+    g.items.forEach(i=>{ h+=`<button class="chip" onclick="addEiwitItem('${i.id}')">${i.naam} <b>+${i.eiwit}</b></button>`; });
+    h+='</div>';
+  });
+  h+=`<div class="sec">Iets anders</div>
+    <div class="logrow"><input id="vNaam" placeholder="bv. omelet 3 eieren"></div>
+    <div class="logrow"><input id="vGram" type="number" inputmode="numeric" placeholder="g eiwit (leeg = Claude schat het)">
+    <button class="ghost" onclick="addEiwitVrij()">Toevoegen</button></div></div>`;
+  main.innerHTML=h;
+}
+function addEiwitItem(id){
+  let it=null;
+  ((state.voeding&&state.voeding.groepen)||[]).forEach(g=>g.items.forEach(i=>{ if(i.id===id) it=i; }));
+  if(!it) return;
+  addEntry({type:'eiwit', datum:localDate(), item:id, naam:it.naam, eiwit:it.eiwit});
+  render();
+}
+function addEiwitVrij(){
+  const n=document.getElementById('vNaam').value.trim();
+  if(!n){ toast('Geef een omschrijving'); return }
+  const g=parseFloat(document.getElementById('vGram').value);
+  addEntry({type:'eiwit', datum:localDate(), naam:n, eiwit:isNaN(g)?null:g});
+  render();
+}
+function annuleer(ts){ addEntry({type:'annuleer', datum:localDate(), ref:ts}); render(); }
+
 function vink(datum){
   if(sessieGedaan(datum)){ toast('Al afgevinkt'); return }
   addEntry({type:'sessie', datum, status:'gedaan'});
