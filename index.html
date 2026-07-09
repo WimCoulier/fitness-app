@@ -145,7 +145,7 @@ async function getJson(path){
   if(!r.ok) throw new Error(path+': HTTP '+r.status);
   return r.json();
 }
-async function putJson(path, obj, msg){
+async function putJson(path, obj, msg, poging=0){
   // sha ophalen (bestand kan nog niet bestaan)
   let sha;
   const r0 = await api(path, {raw:false});
@@ -153,7 +153,11 @@ async function putJson(path, obj, msg){
   const body = { message: msg, content: b64(JSON.stringify(obj, null, 1)) };
   if(sha) body.sha = sha;
   const r = await api(path, {method:'PUT', raw:false, body: JSON.stringify(body)});
-  if(!r.ok) throw new Error('PUT '+path+': HTTP '+r.status);
+  if(!r.ok){
+    if(r.status===409 && poging<2) return putJson(path, obj, msg, poging+1);
+    let det=''; try{ det=(await r.json()).message||'' }catch(e){}
+    throw new Error('PUT '+path+': HTTP '+r.status+(det? ' — '+det:''));
+  }
 }
 function b64(s){ return btoa(unescape(encodeURIComponent(s))) }
 
@@ -226,7 +230,7 @@ async function flushQueue(){
     }
     state.log = remote; LS.setItem('cache.log', JSON.stringify(remote));
     LS.setItem('queue','[]');
-  }catch(e){ toast('Bewaard op toestel — sync volgt', true) }
+  }catch(e){ toast('Sync-fout: '+((e&&e.message)||e), true, 6000) }
   flushing=false;
   if(flushAgain){ flushAgain=false; flushQueue(); }
 }
@@ -508,10 +512,10 @@ function logGewicht(){
 
 /* ---------- toast ---------- */
 let toastT;
-function toast(msg, warn){
+function toast(msg, warn, duur){
   const t=document.getElementById('toast');
   t.textContent=msg; t.classList.toggle('queued',!!warn); t.classList.add('show');
-  clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),2500);
+  clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'), duur||2500);
 }
 
 /* ---------- start ---------- */
