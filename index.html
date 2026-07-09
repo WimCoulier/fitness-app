@@ -102,7 +102,7 @@
     <div class="sub" id="periode"></div>
     <div class="switch">
       <button id="swT" class="on" onclick="setView('training')">Training</button>
-      <button id="swE" onclick="setView('eiwit')">Eiwit</button>
+      <button id="swE" onclick="setView('eiwit')">Voeding</button>
       <button id="swR" onclick="setView('trends')">Trends</button>
     </div>
   </header>
@@ -326,19 +326,26 @@ function vindItem(id){
 }
 function renderEiwit(){
   const doel=state.schema.eiwitDoel||130;
+  const kdoel=state.schema.kcalDoel||2200;
   const es=eiwitVandaag();
   const tot=Math.round(es.reduce((s,x)=>s+(x.eiwit||0),0));
+  const ktot=Math.round(es.reduce((s,x)=>s+(x.kcal||0),0));
   const unk=es.filter(x=>x.eiwit==null).length;
+  const kunk=es.filter(x=>x.kcal==null).length;
   const pct=Math.min(100, tot/doel*100);
+  const kpct=Math.min(100, ktot/kdoel*100);
   const kleur= tot>=doel*0.9 ? 'var(--green)' : 'var(--accent)';
-  let h=`<div class="card"><p class="focus">Eiwit vandaag</p>
-    <div class="meta">doel ${doel} g per dag</div>
-    <div style="font-size:2rem;font-weight:700">${tot} <span style="font-size:1rem;color:var(--muted)">/ ${doel} g${unk? ' (+'+unk+' te schatten)':''}</span></div>
-    <div class="bar"><div style="width:${pct}%;background:${kleur}"></div></div>`;
+  const kkleur= ktot>kdoel ? 'var(--red)' : (ktot>kdoel*0.9? 'var(--amber)':'var(--accent)');
+  let h=`<div class="card"><p class="focus">Voeding vandaag</p>
+    <div class="meta">doel ${doel} g eiwit · max ${kdoel} kcal</div>
+    <div style="font-size:2rem;font-weight:700">${tot} <span style="font-size:1rem;color:var(--muted)">/ ${doel} g eiwit${unk? ' (+'+unk+' te schatten)':''}</span></div>
+    <div class="bar"><div style="width:${pct}%;background:${kleur}"></div></div>
+    <div style="font-size:1.4rem;font-weight:700;margin-top:10px">${ktot} <span style="font-size:.95rem;color:var(--muted)">/ ${kdoel} kcal${kunk? ' (+'+kunk+' te schatten)':''}</span></div>
+    <div class="bar"><div style="width:${kpct}%;background:${kkleur}"></div></div>`;
   if(es.length){
     h+='<div class="sec">Vandaag gelogd</div>';
     es.slice().reverse().forEach(e=>{
-      h+=`<div class="entry"><span>${e.naam}${e.gram? ' · '+e.gram+' g':''}</span><span>${e.eiwit!=null? (e.geschat?'≈':'')+e.eiwit+' g':'?'}</span><button onclick="annuleer('${e.ts}')">✕</button></div>`;
+      h+=`<div class="entry"><span>${e.naam}${e.gram? ' · '+e.gram+' g':''}</span><span>${e.eiwit!=null? (e.geschat?'≈':'')+e.eiwit+' g':'?'}${e.kcal!=null? ' · '+e.kcal+' kcal':''}</span><button onclick="annuleer('${e.ts}')">✕</button></div>`;
     });
   }
   h+='</div><div class="card"><p class="focus">Snel toevoegen</p><div class="meta">Tik een item en pas het gewicht aan</div>';
@@ -354,8 +361,9 @@ function renderEiwit(){
     <div class="logrow"><input id="vNaam" placeholder="wat at je? bv. omelet"></div>
     <div class="logrow"><input id="vGewicht" type="number" inputmode="decimal" placeholder="gewicht (g)">
     <input id="vPer100" type="number" inputmode="decimal" placeholder="eiwit /100 g"></div>
-    <div class="logrow"><input id="vEiwit" type="number" inputmode="decimal" placeholder="of eiwit totaal (g)">
-    <button class="ghost" onclick="addEiwitVrij()">Toevoegen</button></div>
+    <div class="logrow"><input id="vKcal100" type="number" inputmode="decimal" placeholder="kcal /100 g">
+    <input id="vEiwit" type="number" inputmode="decimal" placeholder="of eiwit totaal (g)"></div>
+    <div class="logrow"><button class="ghost" style="flex:1" onclick="addEiwitVrij()">Toevoegen</button></div>
     <div class="hist">Eiwit /100 g staat op de verpakking; met gewicht erbij rekent de app zelf. Alles leeg? Dan telt het als "te schatten" tot Claude het 's nachts invult, en komt het item in je tik-lijst.</div></div>`;
   main.innerHTML=h;
 }
@@ -376,7 +384,7 @@ function openEiwitSheet(id){
     `<button type="button" class="chip" onclick="zetGram(${g})">${g} g</button>`).join('')+'</div>';
   sheet.innerHTML=`<button class="xclose" type="button" onclick="closeSheet()">✕</button>
     <h2>${it.naam}</h2>
-    <span class="badge">${it.eiwitPer100g} g eiwit / 100 g</span>
+    <span class="badge">${it.eiwitPer100g} g eiwit / 100 g</span>${it.kcalPer100g!=null? '<span class="badge">'+it.kcalPer100g+' kcal / 100 g</span>':''}
     <div class="sec">Gewicht (g)</div>
     <div class="logrow"><input id="gIn" type="number" inputmode="numeric" value="${standaard}">
     <button class="ghost" type="button" onclick="zetGram(${it.portieGram})">portie</button></div>
@@ -386,7 +394,7 @@ function openEiwitSheet(id){
     <button class="ghost" type="button" style="width:100%;margin-top:8px" onclick="closeSheet()">Annuleren</button>`;
   sheetWrap.style.display='block';
   const upd=()=>{ const g=parseFloat(document.getElementById('gIn').value)||0;
-    document.getElementById('gPrev').textContent='= '+Math.round(g*it.eiwitPer100g/100)+' g eiwit'; };
+    document.getElementById('gPrev').textContent='= '+Math.round(g*it.eiwitPer100g/100)+' g eiwit'+(it.kcalPer100g!=null? ' · '+Math.round(g*it.kcalPer100g/100)+' kcal':''); };
   document.getElementById('gIn').addEventListener('input',upd); upd();
 }
 function zetGram(g){ const el=document.getElementById('gIn'); el.value=g; el.dispatchEvent(new Event('input')); }
@@ -394,7 +402,9 @@ function bevestigEiwit(id){
   const it=vindItem(id);
   const g=parseFloat(document.getElementById('gIn').value);
   if(!g||g<=0){ toast('Geef een gewicht in'); return }
-  addEntry({type:'eiwit', datum:localDate(), item:id, naam:it.naam, gram:g, eiwit:Math.round(g*it.eiwitPer100g/100)});
+  const entry={type:'eiwit', datum:localDate(), item:id, naam:it.naam, gram:g, eiwit:Math.round(g*it.eiwitPer100g/100)};
+  if(it.kcalPer100g!=null) entry.kcal=Math.round(g*it.kcalPer100g/100);
+  addEntry(entry);
   closeSheet(); render();
 }
 function addEiwitVrij(){
@@ -409,6 +419,8 @@ function addEiwitVrij(){
   else if(!isNaN(t)) eiwit=t;
   const entry={type:'eiwit', datum:localDate(), naam:n, gram:isNaN(g)?null:g, eiwit:eiwit};
   if(!isNaN(p)) entry.eiwitPer100g=p;
+  const k=parseFloat(document.getElementById('vKcal100').value);
+  if(!isNaN(k)){ entry.kcalPer100g=k; if(!isNaN(g)) entry.kcal=Math.round(g*k/100); }
   addEntry(entry);
   render();
 }
@@ -469,6 +481,15 @@ function renderTrends(){
   const eiw=histE.concat(liveE).sort((a,b)=>a.d<b.d?-1:1).slice(-14);
   h+=`<div class="card"><p class="focus">Eiwit per dag</p><div class="meta">laatste 14 dagen</div>
     ${spark(eiw.map(p=>({y:p.g,l:dl(p.d)})),{doel:state.schema.eiwitDoel||130})}</div>`;
+  // calorieën per dag
+  const histK=(tr.kcal&&tr.kcal.punten)||[];
+  const kzien=new Set(histK.map(p=>p.d));
+  const perDagK={};
+  state.log.entries.filter(x=>x.type==='eiwit'&&!ann.has(x.ts)&&x.kcal!=null).forEach(x=>{ perDagK[x.datum]=(perDagK[x.datum]||0)+x.kcal; });
+  const liveK=Object.keys(perDagK).filter(d=>!kzien.has(d)).map(d=>({d,g:Math.round(perDagK[d])}));
+  const kcalR=histK.concat(liveK).sort((a,b)=>a.d<b.d?-1:1).slice(-14);
+  h+=`<div class="card"><p class="focus">Calorieën per dag</p><div class="meta">laatste 14 dagen</div>
+    ${spark(kcalR.map(p=>({y:p.g,l:dl(p.d)})),{doel:state.schema.kcalDoel||2200})}</div>`;
   // krachtprogressie
   h+='<div class="card"><p class="focus">Krachtprogressie</p>';
   const kr={};
