@@ -41,7 +41,7 @@
   button.ghost{background:none; border:1px solid var(--line); color:var(--text); border-radius:12px; padding:10px 14px}
   /* detail sheet */
   #sheetWrap{position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; z-index:20}
-  #sheet{position:absolute; left:0; right:0; bottom:0; max-height:86%; overflow-y:auto;
+  #sheet{position:absolute; left:0; right:0; bottom:0; max-height:86%; overflow-y:auto; padding-top:20px;
          background:var(--card); border-radius:20px 20px 0 0; padding:20px 16px 30px}
   #sheet h2{margin:0 0 4px; font-size:1.1rem}
   .badge{display:inline-block; font-size:.72rem; background:var(--card2); color:var(--muted);
@@ -57,6 +57,9 @@
   .chips{display:flex; flex-wrap:wrap; gap:6px}
   .chip{background:var(--card2); border:1px solid var(--line); color:var(--text); border-radius:10px; padding:8px 10px; font-size:.82rem}
   .chip b{color:var(--accent); font-weight:700}
+  .chip.on{border-color:var(--accent); color:var(--accent); font-weight:600}
+  .xclose{position:absolute; top:12px; right:12px; background:var(--card2); border:0; color:var(--muted);
+      font-size:1.05rem; padding:6px 11px; border-radius:10px}
   .entry{display:flex; align-items:center; gap:8px; background:var(--card2); border-radius:10px; padding:8px 10px; margin-top:6px; font-size:.88rem}
   .entry span:first-child{flex:1}
   .entry button{background:none; border:0; color:var(--muted); font-size:1rem; padding:2px 6px}
@@ -237,8 +240,19 @@ async function flushQueue(){
 }
 
 /* ---------- helpers ---------- */
+function rondeEntries(id){
+  const ann=annulled();
+  return state.log.entries.filter(x=>x.type==='ronde'&&x.oefening===id&&!ann.has(x.ts));
+}
+function laatsteKg(id){
+  const ann=annulled();
+  const es=state.log.entries.filter(x=>!ann.has(x.ts)&&x.oefening===id&&(x.type==='gewicht'||x.type==='ronde')&&x.gewicht!=null);
+  return es.length? es[es.length-1].gewicht : null;
+}
 function laatsteGewicht(oefId){
-  const e = [...state.log.entries].reverse().find(x=>x.type==='gewicht'&&x.oefening===oefId);
+  const ann=annulled();
+  const es=state.log.entries.filter(x=>!ann.has(x.ts)&&x.oefening===oefId&&(x.type==='gewicht'||x.type==='ronde')&&x.gewicht!=null);
+  const e=es[es.length-1];
   if(e) return e.gewicht+' kg ('+e.datum.slice(5)+')';
   const dag = state.schema.dagen.find(d=>(d.oefeningen||[]).some(o=>o.id===oefId&&o.vorigGewicht));
   if(dag){ const o=dag.oefeningen.find(o=>o.id===oefId); if(o.vorigGewicht) return o.vorigGewicht+' kg (vorige week)' }
@@ -283,6 +297,7 @@ function render(){
     <p class="focus">${d.focus}</p>
     <div class="meta">${d.duur}${d.reeks? ' · '+d.reeks:''}</div>
     <div class="desc">${d.beschrijving}</div>`;
+  if(d.rust) h+=`<div class="hist">⏱ ${d.rust}</div>`;
   if((d.oefeningen||[]).length){
     h+='<ul class="exlist">';
     d.oefeningen.forEach(o=>{
@@ -344,24 +359,37 @@ function renderEiwit(){
     <div class="hist">Eiwit /100 g staat op de verpakking; met gewicht erbij rekent de app zelf. Alles leeg? Dan telt het als "te schatten" tot Claude het 's nachts invult, en komt het item in je tik-lijst.</div></div>`;
   main.innerHTML=h;
 }
+function topGewichten(id, it){
+  const telling={};
+  ((it.gewichten)||[]).forEach((g,i)=>{ telling[g]=(telling[g]||0)+(0.5-i*0.1); }); // historiek (nachtelijke taak), licht gewogen
+  const ann=annulled();
+  state.log.entries.filter(x=>x.type==='eiwit'&&x.item===id&&x.gram&&!ann.has(x.ts))
+    .forEach(x=>{ telling[x.gram]=(telling[x.gram]||0)+1; });
+  return Object.entries(telling).sort((a,b)=>b[1]-a[1]).slice(0,5).map(x=>parseFloat(x[0]));
+}
 function openEiwitSheet(id){
   const it=vindItem(id); if(!it) return;
-  sheet.innerHTML=`<h2>${it.naam}</h2>
+  const top=topGewichten(id, it);
+  const standaard = top.length? top[0] : it.portieGram; // meest ingegeven gewicht als default
+  let chips='';
+  if(top.length) chips='<div class="chips" style="margin:8px 0 0">'+top.map(g=>
+    `<button type="button" class="chip" onclick="zetGram(${g})">${g} g</button>`).join('')+'</div>';
+  sheet.innerHTML=`<button class="xclose" type="button" onclick="closeSheet()">✕</button>
+    <h2>${it.naam}</h2>
     <span class="badge">${it.eiwitPer100g} g eiwit / 100 g</span>
     <div class="sec">Gewicht (g)</div>
-    <div class="logrow"><input id="gIn" type="number" inputmode="numeric" value="${it.portieGram}">
-    <button class="ghost" onclick="resetPortie(${it.portieGram})">standaard</button></div>
+    <div class="logrow"><input id="gIn" type="number" inputmode="numeric" value="${standaard}">
+    <button class="ghost" type="button" onclick="zetGram(${it.portieGram})">portie</button></div>
+    ${chips}
     <div class="hist" id="gPrev"></div>
-    <br><button class="primary" onclick="bevestigEiwit('${id}')">Toevoegen</button>
-    <button class="ghost" style="width:100%;margin-top:8px" onclick="closeSheet()">Annuleren</button>`;
+    <br><button class="primary" type="button" onclick="bevestigEiwit('${id}')">Toevoegen</button>
+    <button class="ghost" type="button" style="width:100%;margin-top:8px" onclick="closeSheet()">Annuleren</button>`;
   sheetWrap.style.display='block';
   const upd=()=>{ const g=parseFloat(document.getElementById('gIn').value)||0;
     document.getElementById('gPrev').textContent='= '+Math.round(g*it.eiwitPer100g/100)+' g eiwit'; };
   document.getElementById('gIn').addEventListener('input',upd); upd();
 }
-function resetPortie(g){
-  const el=document.getElementById('gIn'); el.value=g; el.dispatchEvent(new Event('input'));
-}
+function zetGram(g){ const el=document.getElementById('gIn'); el.value=g; el.dispatchEvent(new Event('input')); }
 function bevestigEiwit(id){
   const it=vindItem(id);
   const g=parseFloat(document.getElementById('gIn').value);
@@ -445,7 +473,7 @@ function renderTrends(){
   h+='<div class="card"><p class="focus">Krachtprogressie</p>';
   const kr={};
   Object.entries(tr.kracht||{}).forEach(([id,v])=>{ kr[id]={naam:v.naam,punten:v.punten.slice()}; });
-  state.log.entries.filter(x=>x.type==='gewicht'&&!ann.has(x.ts)).forEach(x=>{
+  state.log.entries.filter(x=>(x.type==='gewicht'||(x.type==='ronde'&&x.gewicht!=null))&&!ann.has(x.ts)).forEach(x=>{
     const naam=(state.oef[x.oefening]||{}).naam||x.oefening;
     kr[x.oefening]=kr[x.oefening]||{naam,punten:[]};
     if(!kr[x.oefening].punten.some(p=>p.d===x.datum&&p.kg===x.gewicht)) kr[x.oefening].punten.push({d:x.datum,kg:x.gewicht});
@@ -481,35 +509,91 @@ function vink(datum){
   render();
 }
 
-/* ---------- detail sheet ---------- */
-let curEx=null, curDatum=null;
+/* ---------- detail sheet (oefening + rondes) ---------- */
+let curEx=null, curDatum=null, curVariant=null;
+function fmtRonde(r, ex){
+  let s='R'+(r.ronde||'?')+': ';
+  if(r.reps!=null) s+=r.reps+((ex.meting==='sec')?' sec':'×');
+  if(r.variant) s+=' '+r.variant;
+  if(r.gewicht!=null) s+=' @'+r.gewicht+' kg';
+  return s;
+}
+function gekozenVariant(id){
+  if(curVariant) return curVariant;
+  const rs=rondeEntries(id).filter(r=>r.variant);
+  return rs.length? rs[rs.length-1].variant : null;
+}
+function kiesVariant(el,v){
+  curVariant=v;
+  el.parentNode.querySelectorAll('.chip').forEach(c=>c.classList.remove('on'));
+  el.classList.add('on');
+}
 function openSheet(id, datum){
-  curEx=id; curDatum=datum;
-  const ex = state.oef[id]; if(!ex) return;
-  const lg = laatsteGewicht(id);
-  let h = `<h2>${ex.naam}</h2>
+  curEx=id; curDatum=datum; curVariant=null;
+  renderOefSheet();
+  sheetWrap.style.display='block';
+}
+function renderOefSheet(){
+  const id=curEx, datum=curDatum;
+  const ex=state.oef[id]; if(!ex) return;
+  const meting=ex.meting||'reps';
+  const rondes=rondeEntries(id);
+  const vandaag=rondes.filter(r=>r.datum===datum);
+  const vDatums=[...new Set(rondes.filter(r=>r.datum<datum).map(r=>r.datum))].sort();
+  const vDag=vDatums[vDatums.length-1];
+  let h=`<button class="xclose" type="button" onclick="closeSheet()">✕</button>
+    <h2>${ex.naam}</h2>
     <span class="badge">${ex.patroon}</span><span class="badge">${ex.materiaal}</span>
     ${ex.svg? '<div class="illu">'+ex.svg+'</div>':''}
     <div class="sec">Uitvoering</div><div class="uitleg">${ex.uitleg}</div>
     <div class="sec">Progressie</div><div class="uitleg">${ex.progressie}</div>`;
-  if(ex.logGewicht){
-    h+=`<div class="sec">Gewicht loggen</div>
-      ${lg? '<div class="hist">Laatst: '+lg+'</div>':''}
+  if(meting!=='geen'){
+    if(vDag){
+      const vorige=rondes.filter(r=>r.datum===vDag);
+      h+=`<div class="sec">Vorige keer (${vDag.slice(8)}/${vDag.slice(5,7)})</div><div class="hist">${vorige.map(r=>fmtRonde(r,ex)).join(' · ')}</div>`;
+    } else {
+      const lg=laatsteGewicht(id);
+      if(lg) h+=`<div class="sec">Vorige keer</div><div class="hist">${lg}</div>`;
+    }
+    if(vandaag.length){
+      h+='<div class="sec">Vandaag</div>';
+      vandaag.forEach(r=>{ h+=`<div class="entry"><span>${fmtRonde(r,ex)}</span><button type="button" onclick="annuleerRonde('${r.ts}')">✕</button></div>`; });
+    }
+    const nr=vandaag.length+1;
+    h+=`<div class="sec">Ronde ${nr} loggen</div>
       <div class="logrow">
-        <input id="wIn" type="number" inputmode="decimal" step="0.5" placeholder="kg">
-        <button class="ghost" onclick="logGewicht()">Opslaan</button>
-      </div>`;
+        <input id="rIn" type="number" inputmode="numeric" placeholder="${meting==='sec'?'seconden':'aantal herhalingen'}">`;
+    if(ex.logGewicht){
+      const kg=laatsteKg(id);
+      h+=`<input id="rKg" type="number" inputmode="decimal" step="0.5" placeholder="kg"${kg? ' value="'+kg+'"':''}>`;
+    }
+    h+='</div>';
+    if(ex.varianten && ex.varianten.length){
+      const gv=gekozenVariant(id);
+      h+='<div class="chips" style="margin-top:8px">'+ex.varianten.map(v=>
+        `<button type="button" class="chip${v===gv?' on':''}" onclick="kiesVariant(this,'${v}')">${v}</button>`).join('')+'</div>';
+    }
+    h+=`<button class="primary" type="button" onclick="logRonde()">Ronde ${nr} opslaan</button>
+      <div class="hist">⏱ Rust 60–90 sec voor je aan de volgende ronde begint.</div>`;
   }
-  h+='<br><button class="primary" onclick="closeSheet()">Sluiten</button>';
-  sheet.innerHTML=h; sheetWrap.style.display='block';
+  h+='<button class="ghost" type="button" style="width:100%;margin-top:10px" onclick="closeSheet()">Sluiten</button>';
+  sheet.innerHTML=h;
 }
+function logRonde(){
+  const ex=state.oef[curEx]; const meting=ex.meting||'reps';
+  const n=parseFloat(document.getElementById('rIn').value);
+  if(isNaN(n)||n<=0){ toast(meting==='sec'?'Geef het aantal seconden in':'Geef het aantal herhalingen in'); return }
+  const entry={type:'ronde', datum:curDatum, oefening:curEx,
+    ronde:rondeEntries(curEx).filter(r=>r.datum===curDatum).length+1, reps:n};
+  const kgEl=document.getElementById('rKg');
+  if(kgEl){ const kg=parseFloat(kgEl.value); if(!isNaN(kg)&&kg>0) entry.gewicht=kg; }
+  const v=gekozenVariant(curEx);
+  if(ex.varianten && v) entry.variant=v;
+  addEntry(entry);
+  renderOefSheet(); render();
+}
+function annuleerRonde(ts){ addEntry({type:'annuleer', datum:curDatum, ref:ts}); renderOefSheet(); render(); }
 function closeSheet(){ sheetWrap.style.display='none' }
-function logGewicht(){
-  const v = parseFloat(document.getElementById('wIn').value);
-  if(!v){ toast('Geef een gewicht in'); return }
-  addEntry({type:'gewicht', datum:curDatum, oefening:curEx, gewicht:v});
-  closeSheet(); render();
-}
 
 /* ---------- toast ---------- */
 let toastT;
