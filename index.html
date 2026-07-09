@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<link rel="manifest" href="manifest.json">
+<title>Training</title>
+<style>
+  :root{
+    --bg:#0f172a; --card:#1e293b; --card2:#273549; --text:#e2e8f0; --muted:#94a3b8;
+    --accent:#38bdf8; --green:#34d399; --amber:#fbbf24; --red:#f87171; --line:#334155;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  body{margin:0; font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif; background:var(--bg); color:var(--text); padding-bottom:40px}
+  header{padding:16px 16px 8px; position:sticky; top:0; background:var(--bg); z-index:5}
+  h1{font-size:1.15rem; margin:0 0 2px}
+  .sub{color:var(--muted); font-size:.85rem}
+  .tabs{display:flex; gap:6px; overflow-x:auto; padding:10px 16px 6px; scrollbar-width:none}
+  .tabs::-webkit-scrollbar{display:none}
+  .tab{flex:0 0 auto; border:1px solid var(--line); background:var(--card); color:var(--text);
+       border-radius:12px; padding:8px 12px; font-size:.85rem; text-align:center; min-width:52px}
+  .tab.active{background:var(--accent); color:#082f49; border-color:var(--accent); font-weight:600}
+  .tab.done{border-color:var(--green)}
+  .tab small{display:block; font-size:.7rem; opacity:.75}
+  main{padding:8px 16px}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px; margin-bottom:12px}
+  .focus{font-size:1.05rem; font-weight:600; margin:0}
+  .meta{color:var(--muted); font-size:.85rem; margin:4px 0 10px}
+  .desc{font-size:.92rem; line-height:1.5; color:var(--text)}
+  .exlist{margin:12px 0 0; padding:0; list-style:none}
+  .ex{display:flex; justify-content:space-between; align-items:center; gap:8px;
+      background:var(--card2); border-radius:12px; padding:12px; margin-bottom:8px; cursor:pointer}
+  .ex .nm{font-weight:600; font-size:.95rem}
+  .ex .dl{color:var(--muted); font-size:.8rem; margin-top:2px}
+  .ex .wt{color:var(--accent); font-size:.85rem; white-space:nowrap}
+  .ex .chev{color:var(--muted)}
+  button.primary{width:100%; padding:14px; border:0; border-radius:14px; background:var(--accent);
+      color:#082f49; font-size:1rem; font-weight:700; margin-top:6px}
+  button.primary.done{background:var(--green)}
+  button.ghost{background:none; border:1px solid var(--line); color:var(--text); border-radius:12px; padding:10px 14px}
+  /* detail sheet */
+  #sheetWrap{position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; z-index:20}
+  #sheet{position:absolute; left:0; right:0; bottom:0; max-height:86%; overflow-y:auto;
+         background:var(--card); border-radius:20px 20px 0 0; padding:20px 16px 30px}
+  #sheet h2{margin:0 0 4px; font-size:1.1rem}
+  .badge{display:inline-block; font-size:.72rem; background:var(--card2); color:var(--muted);
+         border-radius:8px; padding:3px 8px; margin:0 6px 10px 0}
+  .sec{font-size:.8rem; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:14px 0 4px}
+  .uitleg{font-size:.95rem; line-height:1.55}
+  .logrow{display:flex; gap:8px; margin-top:8px}
+  .logrow input{flex:1; background:var(--card2); border:1px solid var(--line); border-radius:12px;
+      color:var(--text); padding:12px; font-size:1rem; min-width:0}
+  .hist{font-size:.85rem; color:var(--muted); margin-top:6px}
+  .toast{position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:var(--card2);
+      border:1px solid var(--line); padding:10px 18px; border-radius:12px; font-size:.9rem; z-index:30;
+      opacity:0; transition:opacity .25s}
+  .toast.show{opacity:1}
+  .queued{color:var(--amber)}
+  /* setup */
+  #setup{padding:24px 16px}
+  #setup label{display:block; font-size:.85rem; color:var(--muted); margin:14px 0 4px}
+  #setup input{width:100%; background:var(--card); border:1px solid var(--line); border-radius:12px;
+      color:var(--text); padding:12px; font-size:1rem}
+  .note{font-size:.8rem; color:var(--muted); line-height:1.5; margin-top:14px}
+  .stoplicht{font-size:.8rem; color:var(--muted); line-height:1.6; padding:0 4px}
+  .err{color:var(--red); font-size:.85rem; margin-top:10px}
+</style>
+</head>
+<body>
+
+<div id="setup" style="display:none">
+  <h1>Instellen</h1>
+  <p class="note">Eenmalig: koppel de app aan je privé GitHub-datarepo. Deze gegevens blijven alleen op dit toestel (localStorage).</p>
+  <label>GitHub-gebruikersnaam</label><input id="cfgOwner" autocapitalize="none" autocorrect="off">
+  <label>Naam datarepo (privé)</label><input id="cfgRepo" value="fitness-data" autocapitalize="none">
+  <label>Fine-grained token (alleen toegang tot die repo, Contents read/write)</label>
+  <input id="cfgToken" type="password" autocapitalize="none">
+  <div id="setupErr" class="err"></div>
+  <br><button class="primary" onclick="saveCfg()">Verbinden</button>
+</div>
+
+<div id="app" style="display:none">
+  <header>
+    <h1 id="titel">Training</h1>
+    <div class="sub" id="periode"></div>
+  </header>
+  <div class="tabs" id="tabs"></div>
+  <main id="main"></main>
+  <div class="stoplicht" id="stoplicht"></div>
+  <main><button class="ghost" style="width:100%" onclick="refresh(true)">↻ Schema herladen</button></main>
+</div>
+
+<div id="sheetWrap" onclick="if(event.target===this)closeSheet()">
+  <div id="sheet"></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const LS = localStorage;
+const state = { schema:null, oef:null, log:{entries:[]}, dagIdx:0 };
+
+/* ---------- config ---------- */
+function cfg(){ try{ return JSON.parse(LS.getItem('cfg'))||null }catch(e){ return null } }
+function saveCfg(){
+  const c = { owner:cfgOwner.value.trim(), repo:cfgRepo.value.trim(), token:cfgToken.value.trim() };
+  if(!c.owner||!c.repo||!c.token){ setupErr.textContent='Vul alle velden in.'; return }
+  LS.setItem('cfg', JSON.stringify(c));
+  boot();
+}
+
+/* ---------- GitHub API ---------- */
+function api(path, opts={}){
+  const c = cfg();
+  return fetch(`https://api.github.com/repos/${c.owner}/${c.repo}/contents/${path}`, {
+    ...opts,
+    headers: {
+      'Authorization':'Bearer '+c.token,
+      'Accept': opts.raw===false ? 'application/vnd.github+json' : 'application/vnd.github.raw+json',
+      'X-GitHub-Api-Version':'2022-11-28',
+      ...(opts.headers||{})
+    }
+  });
+}
+async function getJson(path){
+  const r = await api(path);
+  if(!r.ok) throw new Error(path+': HTTP '+r.status);
+  return r.json();
+}
+async function putJson(path, obj, msg){
+  // sha ophalen (bestand kan nog niet bestaan)
+  let sha;
+  const r0 = await api(path, {raw:false});
+  if(r0.ok) sha = (await r0.json()).sha;
+  const body = { message: msg, content: b64(JSON.stringify(obj, null, 1)) };
+  if(sha) body.sha = sha;
+  const r = await api(path, {method:'PUT', raw:false, body: JSON.stringify(body)});
+  if(!r.ok) throw new Error('PUT '+path+': HTTP '+r.status);
+}
+function b64(s){ return btoa(unescape(encodeURIComponent(s))) }
+
+/* ---------- data laden ---------- */
+async function refresh(force){
+  try{
+    const [schema, oef] = await Promise.all([ getJson('weekschema.json'), getJson('oefeningen.json') ]);
+    state.schema = schema; state.oef = oef.oefeningen;
+    LS.setItem('cache.schema', JSON.stringify(schema));
+    LS.setItem('cache.oef', JSON.stringify(oef.oefeningen));
+    try{ state.log = await getJson('logs/'+schema.id+'.json') }
+    catch(e){ state.log = {schema:schema.id, entries:[]} }
+    LS.setItem('cache.log', JSON.stringify(state.log));
+    await flushQueue();
+    render(); if(force) toast('Schema bijgewerkt');
+  }catch(e){
+    // offline of fout → cache gebruiken
+    const s = LS.getItem('cache.schema');
+    if(s){ state.schema=JSON.parse(s); state.oef=JSON.parse(LS.getItem('cache.oef')||'{}');
+           state.log=JSON.parse(LS.getItem('cache.log')||'{"entries":[]}');
+           render(); toast('Offline — cache gebruikt'); }
+    else if(String(e).includes('401')||String(e).includes('404')){
+      LS.removeItem('cfg'); boot(); setupErr.textContent='Verbinding mislukt ('+e.message+'). Controleer gegevens/token.';
+    } else { toast('Kan schema niet laden'); }
+  }
+}
+
+/* ---------- loggen (met offline wachtrij) ---------- */
+function queue(){ try{ return JSON.parse(LS.getItem('queue'))||[] }catch(e){ return [] } }
+function addEntry(entry){
+  entry.ts = new Date().toISOString();
+  state.log.entries.push(entry);
+  LS.setItem('cache.log', JSON.stringify(state.log));
+  const q = queue(); q.push(entry); LS.setItem('queue', JSON.stringify(q));
+  flushQueue();
+}
+let flushing=false;
+async function flushQueue(){
+  if(flushing) return; const q = queue(); if(!q.length) return;
+  flushing=true;
+  try{
+    // verse log ophalen, wachtrij samenvoegen, terugschrijven
+    let remote;
+    try{ remote = await getJson('logs/'+state.schema.id+'.json') }
+    catch(e){ remote = {schema:state.schema.id, entries:[]} }
+    const seen = new Set(remote.entries.map(x=>x.ts+x.type+(x.oefening||'')));
+    q.forEach(x=>{ if(!seen.has(x.ts+x.type+(x.oefening||''))) remote.entries.push(x) });
+    await putJson('logs/'+state.schema.id+'.json', remote, 'App-log '+new Date().toISOString().slice(0,16));
+    state.log = remote; LS.setItem('cache.log', JSON.stringify(remote));
+    LS.setItem('queue','[]');
+    toast('Opgeslagen ✓');
+  }catch(e){ toast('Bewaard op toestel — sync volgt', true) }
+  flushing=false;
+}
+
+/* ---------- helpers ---------- */
+function laatsteGewicht(oefId){
+  const e = [...state.log.entries].reverse().find(x=>x.type==='gewicht'&&x.oefening===oefId);
+  if(e) return e.gewicht+' kg ('+e.datum.slice(5)+')';
+  const dag = state.schema.dagen.find(d=>(d.oefeningen||[]).some(o=>o.id===oefId&&o.vorigGewicht));
+  if(dag){ const o=dag.oefeningen.find(o=>o.id===oefId); if(o.vorigGewicht) return o.vorigGewicht+' kg (vorige week)' }
+  return null;
+}
+function sessieGedaan(datum){ return state.log.entries.some(x=>x.type==='sessie'&&x.datum===datum) }
+function vandaagIdx(){
+  const t = new Date().toISOString().slice(0,10);
+  const i = state.schema.dagen.findIndex(d=>d.datum===t);
+  return i>=0 ? i : 0;
+}
+
+/* ---------- render ---------- */
+const DAGEN = {ma:'Ma',di:'Di',wo:'Wo',do:'Do',vr:'Vr',za:'Za',zo:'Zo'};
+function render(){
+  document.getElementById('setup').style.display='none';
+  document.getElementById('app').style.display='block';
+  periode.textContent = state.schema.periode + (state.schema.locatie? ' · '+state.schema.locatie:'');
+  stoplicht.textContent = state.schema.stoplicht||'';
+  tabs.innerHTML='';
+  state.schema.dagen.forEach((d,i)=>{
+    const b=document.createElement('button');
+    b.className='tab'+(i===state.dagIdx?' active':'')+(sessieGedaan(d.datum)?' done':'');
+    b.innerHTML = DAGEN[d.dag]+' <small>'+d.datum.slice(8)+'/'+d.datum.slice(5,7)+(sessieGedaan(d.datum)?' ✓':'')+'</small>';
+    b.onclick=()=>{state.dagIdx=i; render()};
+    tabs.appendChild(b);
+  });
+  const d = state.schema.dagen[state.dagIdx];
+  let h = `<div class="card">
+    <p class="focus">${d.focus}</p>
+    <div class="meta">${d.duur}${d.reeks? ' · '+d.reeks:''}</div>
+    <div class="desc">${d.beschrijving}</div>`;
+  if((d.oefeningen||[]).length){
+    h+='<ul class="exlist">';
+    d.oefeningen.forEach(o=>{
+      const ex = state.oef[o.id]||{naam:o.id};
+      const lg = ex.logGewicht ? laatsteGewicht(o.id) : null;
+      h+=`<li class="ex" onclick="openSheet('${o.id}','${d.datum}')">
+        <div><div class="nm">${ex.naam}</div><div class="dl">${o.doel||''}${o.opm? ' · '+o.opm:''}</div></div>
+        <div class="wt">${lg||''}</div><div class="chev">›</div></li>`;
+    });
+    h+='</ul>';
+  }
+  const done = sessieGedaan(d.datum);
+  h+=`<button class="primary${done?' done':''}" onclick="vink('${d.datum}')">${done?'✓ Sessie gedaan':'Sessie afvinken'}</button></div>`;
+  main.innerHTML=h;
+}
+function vink(datum){
+  if(sessieGedaan(datum)){ toast('Al afgevinkt'); return }
+  addEntry({type:'sessie', datum, status:'gedaan'});
+  render();
+}
+
+/* ---------- detail sheet ---------- */
+let curEx=null, curDatum=null;
+function openSheet(id, datum){
+  curEx=id; curDatum=datum;
+  const ex = state.oef[id]; if(!ex) return;
+  const lg = laatsteGewicht(id);
+  let h = `<h2>${ex.naam}</h2>
+    <span class="badge">${ex.patroon}</span><span class="badge">${ex.materiaal}</span>
+    <div class="sec">Uitvoering</div><div class="uitleg">${ex.uitleg}</div>
+    <div class="sec">Progressie</div><div class="uitleg">${ex.progressie}</div>`;
+  if(ex.logGewicht){
+    h+=`<div class="sec">Gewicht loggen</div>
+      ${lg? '<div class="hist">Laatst: '+lg+'</div>':''}
+      <div class="logrow">
+        <input id="wIn" type="number" inputmode="decimal" step="0.5" placeholder="kg">
+        <button class="ghost" onclick="logGewicht()">Opslaan</button>
+      </div>`;
+  }
+  h+='<br><button class="primary" onclick="closeSheet()">Sluiten</button>';
+  sheet.innerHTML=h; sheetWrap.style.display='block';
+}
+function closeSheet(){ sheetWrap.style.display='none' }
+function logGewicht(){
+  const v = parseFloat(document.getElementById('wIn').value);
+  if(!v){ toast('Geef een gewicht in'); return }
+  addEntry({type:'gewicht', datum:curDatum, oefening:curEx, gewicht:v});
+  closeSheet(); render();
+}
+
+/* ---------- toast ---------- */
+let toastT;
+function toast(msg, warn){
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.classList.toggle('queued',!!warn); t.classList.add('show');
+  clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),2500);
+}
+
+/* ---------- start ---------- */
+function boot(){
+  if(!cfg()){ document.getElementById('app').style.display='none';
+    document.getElementById('setup').style.display='block'; return }
+  refresh().then(()=>{ if(state.schema){ state.dagIdx=vandaagIdx(); render(); } });
+}
+boot();
+window.addEventListener('online', flushQueue);
+if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script>
+</body>
+</html>
