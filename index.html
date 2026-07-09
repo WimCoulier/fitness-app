@@ -356,6 +356,14 @@ function renderEiwit(){
     <div class="bar"><div style="width:${pct}%;background:${kleur}"></div></div>
     <div style="font-size:1.4rem;font-weight:700;margin-top:10px">${ktot} <span style="font-size:.95rem;color:var(--muted)">/ ${kdoel} kcal${kunk? ' (+'+kunk+' te schatten)':''}</span></div>
     <div class="bar"><div style="width:${kpct}%;background:${kkleur}"></div></div>`;
+  const vbp=((((state.trends||{}).verbruik)||{}).punten||[]).find(x=>x.d===vd);
+  if(vbp){
+    const bal=ktot-vbp.v;
+    const balKleur= bal<=-200 ? 'var(--green)' : (bal<=0 ? 'var(--amber)' : 'var(--red)');
+    h+=`<div class="hist" style="margin-top:8px">Verbruikt volgens Garmin: <b>${vbp.v} kcal</b>${vd===localDate()? ' (loopt vandaag nog op)':''} → balans <b style="color:${balKleur}">${bal>0?'+':''}${bal} kcal</b> · richtdoel ≈ −400</div>`;
+  } else {
+    h+=`<div class="hist" style="margin-top:8px">Garmin-verbruik voor deze dag nog niet gesynct — komt mee met de (nachtelijke) sync.</div>`;
+  }
   if(es.length){
     h+='<div class="sec">Gelogd op deze dag</div>';
     es.slice().reverse().forEach(e=>{
@@ -506,6 +514,12 @@ function renderTrends(){
   const kcalR=histK.concat(liveK).sort((a,b)=>a.d<b.d?-1:1).slice(-14);
   h+=`<div class="card"><p class="focus">Calorieën per dag</p><div class="meta">laatste 14 dagen</div>
     ${spark(kcalR.map(p=>({y:p.g,l:dl(p.d)})),{doel:state.schema.kcalDoel||2200})}</div>`;
+  // caloriebalans: inname − Garmin-verbruik
+  const vbA=((tr.verbruik)||{}).punten||[];
+  const balP=[];
+  kcalR.forEach(p=>{ const v=vbA.find(x=>x.d===p.d); if(v) balP.push({d:p.d, g:p.g-v.v}); });
+  if(balP.length) h+=`<div class="card"><p class="focus">Caloriebalans per dag</p><div class="meta">inname − verbruik (Garmin) · richtdoel −400</div>
+    ${spark(balP.map(p=>({y:p.g,l:dl(p.d)})),{doel:-400})}</div>`;
   // krachtprogressie
   h+='<div class="card"><p class="focus">Krachtprogressie</p>';
   const kr={};
