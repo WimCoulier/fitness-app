@@ -296,7 +296,7 @@ function renderEiwit(){
   if(es.length){
     h+='<div class="sec">Vandaag gelogd</div>';
     es.slice().reverse().forEach(e=>{
-      h+=`<div class="entry"><span>${e.naam}${e.gram? ' · '+e.gram+' g':''}</span><span>${e.eiwit!=null? e.eiwit+' g':'?'}</span><button onclick="annuleer('${e.ts}')">✕</button></div>`;
+      h+=`<div class="entry"><span>${e.naam}${e.gram? ' · '+e.gram+' g':''}</span><span>${e.eiwit!=null? (e.geschat?'≈':'')+e.eiwit+' g':'?'}</span><button onclick="annuleer('${e.ts}')">✕</button></div>`;
     });
   }
   h+='</div><div class="card"><p class="focus">Snel toevoegen</p><div class="meta">Tik een item en pas het gewicht aan</div>';
@@ -310,10 +310,11 @@ function renderEiwit(){
   });
   h+=`<div class="sec">Iets anders</div>
     <div class="logrow"><input id="vNaam" placeholder="wat at je? bv. omelet"></div>
-    <div class="logrow"><input id="vGewicht" type="number" inputmode="numeric" placeholder="gewicht (g)">
-    <input id="vEiwit" type="number" inputmode="numeric" placeholder="eiwit (g)"></div>
-    <div class="logrow"><button class="ghost" style="flex:1" onclick="addEiwitVrij()">Toevoegen</button></div>
-    <div class="hist">Eiwit onbekend? Laat het leeg — Claude schat het 's nachts en zet het item in je tik-lijst.</div></div>`;
+    <div class="logrow"><input id="vGewicht" type="number" inputmode="decimal" placeholder="gewicht (g)">
+    <input id="vPer100" type="number" inputmode="decimal" placeholder="eiwit /100 g"></div>
+    <div class="logrow"><input id="vEiwit" type="number" inputmode="decimal" placeholder="of eiwit totaal (g)">
+    <button class="ghost" onclick="addEiwitVrij()">Toevoegen</button></div>
+    <div class="hist">Eiwit /100 g staat op de verpakking; met gewicht erbij rekent de app zelf. Alles leeg? Dan telt het als "te schatten" tot Claude het 's nachts invult, en komt het item in je tik-lijst.</div></div>`;
   main.innerHTML=h;
 }
 function openEiwitSheet(id){
@@ -345,8 +346,15 @@ function addEiwitVrij(){
   const n=document.getElementById('vNaam').value.trim();
   if(!n){ toast('Geef een omschrijving'); return }
   const g=parseFloat(document.getElementById('vGewicht').value);
-  const e=parseFloat(document.getElementById('vEiwit').value);
-  addEntry({type:'eiwit', datum:localDate(), naam:n, gram:isNaN(g)?null:g, eiwit:isNaN(e)?null:e});
+  const p=parseFloat(document.getElementById('vPer100').value);
+  const t=parseFloat(document.getElementById('vEiwit').value);
+  if(!isNaN(p)&&isNaN(g)){ toast('Geef ook het gewicht in bij /100 g'); return }
+  let eiwit=null;
+  if(!isNaN(p)&&!isNaN(g)) eiwit=Math.round(g*p/100);
+  else if(!isNaN(t)) eiwit=t;
+  const entry={type:'eiwit', datum:localDate(), naam:n, gram:isNaN(g)?null:g, eiwit:eiwit};
+  if(!isNaN(p)) entry.eiwitPer100g=p;
+  addEntry(entry);
   render();
 }
 function annuleer(ts){ addEntry({type:'annuleer', datum:localDate(), ref:ts}); render(); }
