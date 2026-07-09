@@ -119,7 +119,7 @@
 
 <script>
 const LS = localStorage;
-const state = { schema:null, oef:null, voeding:null, trends:null, params:null, log:{entries:[]}, dagIdx:0, view:'training' };
+const state = { schema:null, oef:null, voeding:null, trends:null, params:null, log:{entries:[]}, dagIdx:0, view:'training', voedingDag:null };
 
 /* ---------- config ---------- */
 function cfg(){ try{ return JSON.parse(LS.getItem('cfg'))||null }catch(e){ return null } }
@@ -258,7 +258,7 @@ function laatsteGewicht(oefId){
   if(dag){ const o=dag.oefeningen.find(o=>o.id===oefId); if(o.vorigGewicht) return o.vorigGewicht+' kg (vorige week)' }
   return null;
 }
-function sessieGedaan(datum){ return state.log.entries.some(x=>x.type==='sessie'&&x.datum===datum) }
+function sessieGedaan(datum){ const ann=annulled(); return state.log.entries.some(x=>x.type==='sessie'&&x.datum===datum&&!ann.has(x.ts)) }
 function localDate(){
   const d=new Date();
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
@@ -315,9 +315,14 @@ function render(){
 }
 /* ---------- eiwit ---------- */
 function annulled(){ return new Set(state.log.entries.filter(x=>x.type==='annuleer').map(x=>x.ref)); }
-function eiwitVandaag(){
-  const t=localDate(), ann=annulled();
-  return state.log.entries.filter(x=>x.type==='eiwit'&&x.datum===t&&!ann.has(x.ts));
+function eiwitOpDag(d){
+  const ann=annulled();
+  return state.log.entries.filter(x=>x.type==='eiwit'&&x.datum===d&&!ann.has(x.ts));
+}
+function stapVoedingDag(n){
+  const dagen=state.schema.dagen.map(d=>d.datum);
+  const i=dagen.indexOf(state.voedingDag)+n;
+  if(i>=0&&i<dagen.length){ state.voedingDag=dagen[i]; render(); }
 }
 function vindItem(id){
   let it=null;
@@ -327,7 +332,11 @@ function vindItem(id){
 function renderEiwit(){
   const doel=state.schema.eiwitDoel||130;
   const kdoel=state.schema.kcalDoel||2200;
-  const es=eiwitVandaag();
+  if(!state.voedingDag) state.voedingDag=localDate();
+  const dagen=state.schema.dagen.map(d=>d.datum);
+  if(!dagen.includes(state.voedingDag)) state.voedingDag=dagen.includes(localDate())? localDate() : dagen[0];
+  const vd=state.voedingDag, di=dagen.indexOf(vd);
+  const es=eiwitOpDag(vd);
   const tot=Math.round(es.reduce((s,x)=>s+(x.eiwit||0),0));
   const ktot=Math.round(es.reduce((s,x)=>s+(x.kcal||0),0));
   const unk=es.filter(x=>x.eiwit==null).length;
@@ -336,14 +345,19 @@ function renderEiwit(){
   const kpct=Math.min(100, ktot/kdoel*100);
   const kleur= tot>=doel*0.9 ? 'var(--green)' : 'var(--accent)';
   const kkleur= ktot>kdoel ? 'var(--red)' : (ktot>kdoel*0.9? 'var(--amber)':'var(--accent)');
-  let h=`<div class="card"><p class="focus">Voeding vandaag</p>
+  let h=`<div class="card">
+    <div class="logrow" style="margin:0 0 8px">
+      <button class="ghost" type="button" ${di<=0?'disabled':''} onclick="stapVoedingDag(-1)">‹</button>
+      <div style="flex:1;text-align:center;align-self:center;font-weight:600">${vd===localDate()? 'Vandaag':''} ${vd.slice(8)}/${vd.slice(5,7)}</div>
+      <button class="ghost" type="button" ${di>=dagen.length-1?'disabled':''} onclick="stapVoedingDag(1)">›</button>
+    </div>
     <div class="meta">doel ${doel} g eiwit · max ${kdoel} kcal</div>
     <div style="font-size:2rem;font-weight:700">${tot} <span style="font-size:1rem;color:var(--muted)">/ ${doel} g eiwit${unk? ' (+'+unk+' te schatten)':''}</span></div>
     <div class="bar"><div style="width:${pct}%;background:${kleur}"></div></div>
     <div style="font-size:1.4rem;font-weight:700;margin-top:10px">${ktot} <span style="font-size:.95rem;color:var(--muted)">/ ${kdoel} kcal${kunk? ' (+'+kunk+' te schatten)':''}</span></div>
     <div class="bar"><div style="width:${kpct}%;background:${kkleur}"></div></div>`;
   if(es.length){
-    h+='<div class="sec">Vandaag gelogd</div>';
+    h+='<div class="sec">Gelogd op deze dag</div>';
     es.slice().reverse().forEach(e=>{
       h+=`<div class="entry"><span>${e.naam}${e.gram? ' · '+e.gram+' g':''}</span><span>${e.eiwit!=null? (e.geschat?'≈':'')+e.eiwit+' g':'?'}${e.kcal!=null? ' · '+e.kcal+' kcal':''}</span><button onclick="annuleer('${e.ts}')">✕</button></div>`;
     });
@@ -402,7 +416,7 @@ function bevestigEiwit(id){
   const it=vindItem(id);
   const g=parseFloat(document.getElementById('gIn').value);
   if(!g||g<=0){ toast('Geef een gewicht in'); return }
-  const entry={type:'eiwit', datum:localDate(), item:id, naam:it.naam, gram:g, eiwit:Math.round(g*it.eiwitPer100g/100)};
+  const entry={type:'eiwit', datum:(state.voedingDag||localDate()), item:id, naam:it.naam, gram:g, eiwit:Math.round(g*it.eiwitPer100g/100)};
   if(it.kcalPer100g!=null) entry.kcal=Math.round(g*it.kcalPer100g/100);
   addEntry(entry);
   closeSheet(); render();
@@ -417,7 +431,7 @@ function addEiwitVrij(){
   let eiwit=null;
   if(!isNaN(p)&&!isNaN(g)) eiwit=Math.round(g*p/100);
   else if(!isNaN(t)) eiwit=t;
-  const entry={type:'eiwit', datum:localDate(), naam:n, gram:isNaN(g)?null:g, eiwit:eiwit};
+  const entry={type:'eiwit', datum:(state.voedingDag||localDate()), naam:n, gram:isNaN(g)?null:g, eiwit:eiwit};
   if(!isNaN(p)) entry.eiwitPer100g=p;
   const k=parseFloat(document.getElementById('vKcal100').value);
   if(!isNaN(k)){ entry.kcalPer100g=k; if(!isNaN(g)) entry.kcal=Math.round(g*k/100); }
@@ -462,8 +476,10 @@ function renderTrends(){
     let extra=[];
     if(pa.id==='gewicht') extra=((tr.gewicht&&tr.gewicht.punten)||[]).map(p=>({d:p.d,v:p.kg}));
     const seen=new Set(hist.concat(extra).map(p=>p.d));
-    const live=state.log.entries.filter(x=>!ann.has(x.ts)&&!seen.has(x.datum)&&((x.type==='parameter'&&x.param===pa.id)||(pa.id==='gewicht'&&x.type==='lichaamsgewicht')))
-      .map(x=>({d:x.datum,v:x.waarde!=null?x.waarde:x.kg}));
+    const lm={};
+    state.log.entries.filter(x=>!ann.has(x.ts)&&((x.type==='parameter'&&x.param===pa.id)||(pa.id==='gewicht'&&x.type==='lichaamsgewicht')))
+      .forEach(x=>{ lm[x.datum]=(x.waarde!=null?x.waarde:x.kg); });
+    const live=Object.keys(lm).filter(d=>!seen.has(d)).map(d=>({d,v:lm[d]}));
     const reeks=hist.concat(extra,live).sort((a,b)=>a.d<b.d?-1:1);
     h+=`<div class="card"><p class="focus">${pa.naam}</p>
       <div class="meta">${reeks.length? 'laatste: '+reeks[reeks.length-1].v+' '+pa.eenheid:'nog geen meting'}${pa.doel!=null? ' · doel '+pa.doel+' '+pa.eenheid:''}</div>
@@ -525,7 +541,9 @@ function logParam(id){
 }
 
 function vink(datum){
-  if(sessieGedaan(datum)){ toast('Al afgevinkt'); return }
+  const ann=annulled();
+  const s=state.log.entries.find(x=>x.type==='sessie'&&x.datum===datum&&!ann.has(x.ts));
+  if(s){ addEntry({type:'annuleer', datum, ref:s.ts}); toast('Afvinken ongedaan gemaakt'); render(); return }
   addEntry({type:'sessie', datum, status:'gedaan'});
   render();
 }
