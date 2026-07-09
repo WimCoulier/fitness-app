@@ -170,8 +170,14 @@ async function refresh(force){
     catch(e){ state.trends = JSON.parse(LS.getItem('cache.trends')||'null'); }
     try{ state.params = await getJson('parameters.json'); LS.setItem('cache.params', JSON.stringify(state.params)); }
     catch(e){ state.params = JSON.parse(LS.getItem('cache.params')||'null'); }
-    try{ state.log = await getJson('logs/'+schema.id+'.json') }
-    catch(e){ state.log = {schema:schema.id, entries:[]} }
+    let remote;
+    try{ remote = await getJson('logs/'+schema.id+'.json') }
+    catch(e){ remote = {schema:schema.id, entries:[]} }
+    // lokaal bewaarde entries (cache, oude wachtrij, huidige sessie) samenvoegen — niets gaat verloren
+    try{ const c=JSON.parse(LS.getItem('cache.log')); if(c && c.schema===schema.id) mergeEntries(remote.entries, c.entries); }catch(e){}
+    try{ mergeEntries(remote.entries, JSON.parse(LS.getItem('queue'))||[]); }catch(e){}
+    if(state.log && state.log.schema===schema.id) mergeEntries(remote.entries, state.log.entries);
+    state.log = remote;
     LS.setItem('cache.log', JSON.stringify(state.log));
     await flushQueue();
     render(); if(force) toast('Schema bijgewerkt');
@@ -190,32 +196,39 @@ async function refresh(force){
   }
 }
 
-/* ---------- loggen (met offline wachtrij) ---------- */
-function queue(){ try{ return JSON.parse(LS.getItem('queue'))||[] }catch(e){ return [] } }
+/* ---------- loggen (offline-bestendig: lokaal log = bron, sync = samenvoegen) ---------- */
+function mergeEntries(base, extra){
+  const key=x=>x.ts+'|'+x.type+'|'+(x.oefening||x.item||x.param||x.ref||'');
+  const seen=new Set(base.map(key));
+  (extra||[]).forEach(x=>{ if(x&&x.ts&&!seen.has(key(x))){ base.push(x); seen.add(key(x)); } });
+  return base;
+}
 function addEntry(entry){
   entry.ts = new Date().toISOString();
   state.log.entries.push(entry);
   LS.setItem('cache.log', JSON.stringify(state.log));
-  const q = queue(); q.push(entry); LS.setItem('queue', JSON.stringify(q));
   flushQueue();
 }
-let flushing=false;
+let flushing=false, flushAgain=false;
 async function flushQueue(){
-  if(flushing) return; const q = queue(); if(!q.length) return;
+  if(flushing){ flushAgain=true; return }
+  if(!state.schema || !cfg()){ return }
   flushing=true;
   try{
-    // verse log ophalen, wachtrij samenvoegen, terugschrijven
     let remote;
     try{ remote = await getJson('logs/'+state.schema.id+'.json') }
     catch(e){ remote = {schema:state.schema.id, entries:[]} }
-    const seen = new Set(remote.entries.map(x=>x.ts+x.type+(x.oefening||'')));
-    q.forEach(x=>{ if(!seen.has(x.ts+x.type+(x.oefening||''))) remote.entries.push(x) });
-    await putJson('logs/'+state.schema.id+'.json', remote, 'App-log '+new Date().toISOString().slice(0,16));
+    const voor = remote.entries.length;
+    mergeEntries(remote.entries, state.log.entries);
+    if(remote.entries.length > voor){
+      await putJson('logs/'+state.schema.id+'.json', remote, 'App-log '+new Date().toISOString().slice(0,16));
+      toast('Opgeslagen ✓');
+    }
     state.log = remote; LS.setItem('cache.log', JSON.stringify(remote));
     LS.setItem('queue','[]');
-    toast('Opgeslagen ✓');
   }catch(e){ toast('Bewaard op toestel — sync volgt', true) }
   flushing=false;
+  if(flushAgain){ flushAgain=false; flushQueue(); }
 }
 
 /* ---------- helpers ---------- */
@@ -509,6 +522,7 @@ function boot(){
 }
 boot();
 window.addEventListener('online', flushQueue);
+setInterval(flushQueue, 60000);
 if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
 </script>
 </body>
