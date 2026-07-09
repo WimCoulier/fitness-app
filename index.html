@@ -116,7 +116,7 @@
 
 <script>
 const LS = localStorage;
-const state = { schema:null, oef:null, voeding:null, trends:null, log:{entries:[]}, dagIdx:0, view:'training' };
+const state = { schema:null, oef:null, voeding:null, trends:null, params:null, log:{entries:[]}, dagIdx:0, view:'training' };
 
 /* ---------- config ---------- */
 function cfg(){ try{ return JSON.parse(LS.getItem('cfg'))||null }catch(e){ return null } }
@@ -168,6 +168,8 @@ async function refresh(force){
     catch(e){ state.voeding = JSON.parse(LS.getItem('cache.voeding')||'null'); }
     try{ state.trends = await getJson('trends.json'); LS.setItem('cache.trends', JSON.stringify(state.trends)); }
     catch(e){ state.trends = JSON.parse(LS.getItem('cache.trends')||'null'); }
+    try{ state.params = await getJson('parameters.json'); LS.setItem('cache.params', JSON.stringify(state.params)); }
+    catch(e){ state.params = JSON.parse(LS.getItem('cache.params')||'null'); }
     try{ state.log = await getJson('logs/'+schema.id+'.json') }
     catch(e){ state.log = {schema:schema.id, entries:[]} }
     LS.setItem('cache.log', JSON.stringify(state.log));
@@ -179,6 +181,7 @@ async function refresh(force){
     if(s){ state.schema=JSON.parse(s); state.oef=JSON.parse(LS.getItem('cache.oef')||'{}');
            state.voeding=JSON.parse(LS.getItem('cache.voeding')||'null');
            state.trends=JSON.parse(LS.getItem('cache.trends')||'null');
+           state.params=JSON.parse(LS.getItem('cache.params')||'null');
            state.log=JSON.parse(LS.getItem('cache.log')||'{"entries":[]}');
            render(); toast('Offline — cache gebruikt'); }
     else if(String(e).includes('401')||String(e).includes('404')){
@@ -393,19 +396,24 @@ function spark(punten, opts={}){
 function dl(d){ return d.slice(8)+'/'+d.slice(5,7); }
 function renderTrends(){
   const tr=state.trends||{}; const ann=annulled();
-  // lichaamsgewicht
-  const histKg=(tr.gewicht&&tr.gewicht.punten)||[];
-  const kseen=new Set(histKg.map(p=>p.d));
-  const liveKg=state.log.entries.filter(x=>x.type==='lichaamsgewicht'&&!ann.has(x.ts)&&!kseen.has(x.datum)).map(x=>({d:x.datum,kg:x.kg}));
-  const kg=histKg.concat(liveKg).sort((a,b)=>a.d<b.d?-1:1);
-  const doelKg=(tr.gewicht&&tr.gewicht.doel)||90;
-  let h=`<div class="card"><p class="focus">Lichaamsgewicht</p>
-    <div class="meta">${kg.length? 'laatste: '+kg[kg.length-1].kg+' kg':'nog geen meting'} · doel ${doelKg} kg</div>
-    ${spark(kg.map(p=>({y:p.kg,l:dl(p.d)})),{doel:doelKg})}
-    <div class="sec">Nieuw weegmoment</div>
-    <div class="logrow"><input id="kgIn" type="number" inputmode="decimal" step="0.1" placeholder="kg">
-    <button class="ghost" onclick="logKg()">Opslaan</button></div>
-    <div class="hist">Weeg 1×/week, zaterdagochtend, zelfde moment — kijk naar de trend, niet de dagschommeling.</div></div>`;
+  // parameters (gewicht, VO2max, ...)
+  const plist=((state.params&&state.params.parameters)||[{id:'gewicht',naam:'Gewicht',eenheid:'kg',doel:90,beter:'lager'}]);
+  let h='';
+  plist.forEach(pa=>{
+    const hist=(((tr.parameters||{})[pa.id])||{}).punten||[];
+    let extra=[];
+    if(pa.id==='gewicht') extra=((tr.gewicht&&tr.gewicht.punten)||[]).map(p=>({d:p.d,v:p.kg}));
+    const seen=new Set(hist.concat(extra).map(p=>p.d));
+    const live=state.log.entries.filter(x=>!ann.has(x.ts)&&!seen.has(x.datum)&&((x.type==='parameter'&&x.param===pa.id)||(pa.id==='gewicht'&&x.type==='lichaamsgewicht')))
+      .map(x=>({d:x.datum,v:x.waarde!=null?x.waarde:x.kg}));
+    const reeks=hist.concat(extra,live).sort((a,b)=>a.d<b.d?-1:1);
+    h+=`<div class="card"><p class="focus">${pa.naam}</p>
+      <div class="meta">${reeks.length? 'laatste: '+reeks[reeks.length-1].v+' '+pa.eenheid:'nog geen meting'}${pa.doel!=null? ' · doel '+pa.doel+' '+pa.eenheid:''}</div>
+      ${spark(reeks.map(p=>({y:p.v,l:dl(p.d)})),{doel:pa.doel})}
+      <div class="logrow"><input id="pIn-${pa.id}" type="number" inputmode="decimal" step="0.1" placeholder="${pa.eenheid}">
+      <button class="ghost" onclick="logParam('${pa.id}')">Opslaan</button></div>
+      ${pa.tip? '<div class="hist">'+pa.tip+'</div>':''}</div>`;
+  });
   // eiwit per dag
   const histE=(tr.eiwit&&tr.eiwit.punten)||[];
   const eseen=new Set(histE.map(p=>p.d));
@@ -442,10 +450,10 @@ function renderTrends(){
   h+='</div>';
   main.innerHTML=h;
 }
-function logKg(){
-  const v=parseFloat(document.getElementById('kgIn').value);
-  if(!v||v<50||v>150){ toast('Geef een realistisch gewicht in kg'); return }
-  addEntry({type:'lichaamsgewicht', datum:localDate(), kg:v});
+function logParam(id){
+  const v=parseFloat(document.getElementById('pIn-'+id).value);
+  if(isNaN(v)){ toast('Geef een waarde in'); return }
+  addEntry({type:'parameter', param:id, datum:localDate(), waarde:v});
   render();
 }
 
