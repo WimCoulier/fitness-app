@@ -119,7 +119,7 @@
 
 <script>
 const LS = localStorage;
-const state = { schema:null, oef:null, voeding:null, trends:null, params:null, log:{entries:[]}, dagIdx:0, view:'training', voedingDag:null };
+const state = { schema:null, oef:null, voeding:null, trends:null, params:null, log:{entries:[]}, dagIdx:0, view:'training', voedingDag:null, oudLog:null };
 
 /* ---------- config ---------- */
 function cfg(){ try{ return JSON.parse(LS.getItem('cfg'))||null }catch(e){ return null } }
@@ -187,6 +187,10 @@ async function refresh(force){
     if(state.log && state.log.schema===schema.id) mergeEntries(remote.entries, state.log.entries);
     state.log = remote;
     LS.setItem('cache.log', JSON.stringify(state.log));
+    if(schema.vorigeWeek){
+      try{ state.oudLog = await getJson('logs/'+schema.vorigeWeek+'.json'); LS.setItem('cache.oudlog', JSON.stringify(state.oudLog)); }
+      catch(e){ state.oudLog = JSON.parse(LS.getItem('cache.oudlog')||'null'); }
+    } else { state.oudLog = null; }
     await flushQueue();
     render(); if(force) toast('Schema bijgewerkt');
   }catch(e){
@@ -196,6 +200,7 @@ async function refresh(force){
            state.voeding=JSON.parse(LS.getItem('cache.voeding')||'null');
            state.trends=JSON.parse(LS.getItem('cache.trends')||'null');
            state.params=JSON.parse(LS.getItem('cache.params')||'null');
+           state.oudLog=JSON.parse(LS.getItem('cache.oudlog')||'null');
            state.log=JSON.parse(LS.getItem('cache.log')||'{"entries":[]}');
            render(); toast('Offline — cache gebruikt'); }
     else if(String(e).includes('401')||String(e).includes('404')){
@@ -242,23 +247,23 @@ async function flushQueue(){
 /* ---------- helpers ---------- */
 function rondeEntries(id){
   const ann=annulled();
-  return state.log.entries.filter(x=>x.type==='ronde'&&x.oefening===id&&!ann.has(x.ts));
+  return alleEntries().filter(x=>x.type==='ronde'&&x.oefening===id&&!ann.has(x.ts));
 }
 function laatsteKg(id){
   const ann=annulled();
-  const es=state.log.entries.filter(x=>!ann.has(x.ts)&&x.oefening===id&&(x.type==='gewicht'||x.type==='ronde')&&x.gewicht!=null);
+  const es=alleEntries().filter(x=>!ann.has(x.ts)&&x.oefening===id&&(x.type==='gewicht'||x.type==='ronde')&&x.gewicht!=null);
   return es.length? es[es.length-1].gewicht : null;
 }
 function laatsteGewicht(oefId){
   const ann=annulled();
-  const es=state.log.entries.filter(x=>!ann.has(x.ts)&&x.oefening===oefId&&(x.type==='gewicht'||x.type==='ronde')&&x.gewicht!=null);
+  const es=alleEntries().filter(x=>!ann.has(x.ts)&&x.oefening===oefId&&(x.type==='gewicht'||x.type==='ronde')&&x.gewicht!=null);
   const e=es[es.length-1];
   if(e) return e.gewicht+' kg ('+e.datum.slice(5)+')';
   const dag = state.schema.dagen.find(d=>(d.oefeningen||[]).some(o=>o.id===oefId&&o.vorigGewicht));
   if(dag){ const o=dag.oefeningen.find(o=>o.id===oefId); if(o.vorigGewicht) return o.vorigGewicht+' kg (vorige week)' }
   return null;
 }
-function sessieGedaan(datum){ const ann=annulled(); return state.log.entries.some(x=>x.type==='sessie'&&x.datum===datum&&!ann.has(x.ts)) }
+function sessieGedaan(datum){ const ann=annulled(); return alleEntries().some(x=>x.type==='sessie'&&x.datum===datum&&!ann.has(x.ts)) }
 function localDate(){
   const d=new Date();
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
@@ -314,13 +319,17 @@ function render(){
   main.innerHTML=h;
 }
 /* ---------- eiwit ---------- */
-function annulled(){ return new Set(state.log.entries.filter(x=>x.type==='annuleer').map(x=>x.ref)); }
+function alleEntries(){ return (((state.oudLog||{}).entries)||[]).concat(state.log.entries); }
+function voedingDagen(){
+  return [...new Set(alleEntries().filter(x=>x.type==='eiwit').map(x=>x.datum).concat(state.schema.dagen.map(d=>d.datum)))].sort();
+}
+function annulled(){ return new Set(alleEntries().filter(x=>x.type==='annuleer').map(x=>x.ref)); }
 function eiwitOpDag(d){
   const ann=annulled();
-  return state.log.entries.filter(x=>x.type==='eiwit'&&x.datum===d&&!ann.has(x.ts));
+  return alleEntries().filter(x=>x.type==='eiwit'&&x.datum===d&&!ann.has(x.ts));
 }
 function stapVoedingDag(n){
-  const dagen=state.schema.dagen.map(d=>d.datum);
+  const dagen=voedingDagen();
   const i=dagen.indexOf(state.voedingDag)+n;
   if(i>=0&&i<dagen.length){ state.voedingDag=dagen[i]; render(); }
 }
@@ -333,7 +342,7 @@ function renderEiwit(){
   const doel=state.schema.eiwitDoel||130;
   const kdoel=state.schema.kcalDoel||2200;
   if(!state.voedingDag) state.voedingDag=localDate();
-  const dagen=state.schema.dagen.map(d=>d.datum);
+  const dagen=voedingDagen();
   if(!dagen.includes(state.voedingDag)) state.voedingDag=dagen.includes(localDate())? localDate() : dagen[0];
   const vd=state.voedingDag, di=dagen.indexOf(vd);
   const es=eiwitOpDag(vd);
@@ -394,7 +403,7 @@ function topGewichten(id, it){
   const telling={};
   ((it.gewichten)||[]).forEach((g,i)=>{ telling[g]=(telling[g]||0)+(0.5-i*0.1); }); // historiek (nachtelijke taak), licht gewogen
   const ann=annulled();
-  state.log.entries.filter(x=>x.type==='eiwit'&&x.item===id&&x.gram&&!ann.has(x.ts))
+  alleEntries().filter(x=>x.type==='eiwit'&&x.item===id&&x.gram&&!ann.has(x.ts))
     .forEach(x=>{ telling[x.gram]=(telling[x.gram]||0)+1; });
   return Object.entries(telling).sort((a,b)=>b[1]-a[1]).slice(0,5).map(x=>parseFloat(x[0]));
 }
@@ -449,7 +458,7 @@ function addEiwitVrij(){
 }
 let eiwitBewerkTs=null;
 function openEiwitBewerk(ts){
-  const e=state.log.entries.find(x=>x.ts===ts); if(!e) return;
+  const e=alleEntries().find(x=>x.ts===ts); if(!e) return;
   eiwitBewerkTs=ts;
   const it=e.item? vindItem(e.item):null;
   const p100e=(e.eiwitPer100g!=null)? e.eiwitPer100g : (it? it.eiwitPer100g:null);
@@ -478,7 +487,7 @@ function openEiwitBewerk(ts){
   }
 }
 function bewaarEiwitBewerk(){
-  const oud=state.log.entries.find(x=>x.ts===eiwitBewerkTs);
+  const oud=alleEntries().find(x=>x.ts===eiwitBewerkTs);
   if(!oud){ closeSheet(); return }
   const naam=document.getElementById('bNaam').value.trim()||oud.naam;
   const g=parseFloat(document.getElementById('bGram').value);
@@ -535,7 +544,7 @@ function renderTrends(){
     if(pa.id==='gewicht') extra=((tr.gewicht&&tr.gewicht.punten)||[]).map(p=>({d:p.d,v:p.kg}));
     const seen=new Set(hist.concat(extra).map(p=>p.d));
     const lm={};
-    state.log.entries.filter(x=>!ann.has(x.ts)&&((x.type==='parameter'&&x.param===pa.id)||(pa.id==='gewicht'&&x.type==='lichaamsgewicht')))
+    alleEntries().filter(x=>!ann.has(x.ts)&&((x.type==='parameter'&&x.param===pa.id)||(pa.id==='gewicht'&&x.type==='lichaamsgewicht')))
       .forEach(x=>{ lm[x.datum]=(x.waarde!=null?x.waarde:x.kg); });
     const live=Object.keys(lm).filter(d=>!seen.has(d)).map(d=>({d,v:lm[d]}));
     const reeks=hist.concat(extra,live).sort((a,b)=>a.d<b.d?-1:1);
@@ -550,7 +559,7 @@ function renderTrends(){
   const histE=(tr.eiwit&&tr.eiwit.punten)||[];
   const eseen=new Set(histE.map(p=>p.d));
   const perDag={};
-  state.log.entries.filter(x=>x.type==='eiwit'&&!ann.has(x.ts)&&x.eiwit!=null).forEach(x=>{ perDag[x.datum]=(perDag[x.datum]||0)+x.eiwit; });
+  alleEntries().filter(x=>x.type==='eiwit'&&!ann.has(x.ts)&&x.eiwit!=null).forEach(x=>{ perDag[x.datum]=(perDag[x.datum]||0)+x.eiwit; });
   const liveE=Object.keys(perDag).filter(d=>!eseen.has(d)).map(d=>({d,g:Math.round(perDag[d])}));
   const eiw=histE.concat(liveE).sort((a,b)=>a.d<b.d?-1:1).slice(-14);
   h+=`<div class="card"><p class="focus">Eiwit per dag</p><div class="meta">laatste 14 dagen</div>
@@ -559,7 +568,7 @@ function renderTrends(){
   const histK=(tr.kcal&&tr.kcal.punten)||[];
   const kzien=new Set(histK.map(p=>p.d));
   const perDagK={};
-  state.log.entries.filter(x=>x.type==='eiwit'&&!ann.has(x.ts)&&x.kcal!=null).forEach(x=>{ perDagK[x.datum]=(perDagK[x.datum]||0)+x.kcal; });
+  alleEntries().filter(x=>x.type==='eiwit'&&!ann.has(x.ts)&&x.kcal!=null).forEach(x=>{ perDagK[x.datum]=(perDagK[x.datum]||0)+x.kcal; });
   const liveK=Object.keys(perDagK).filter(d=>!kzien.has(d)).map(d=>({d,g:Math.round(perDagK[d])}));
   const kcalR=histK.concat(liveK).sort((a,b)=>a.d<b.d?-1:1).slice(-14);
   h+=`<div class="card"><p class="focus">Calorieën per dag</p><div class="meta">laatste 14 dagen</div>
@@ -574,7 +583,7 @@ function renderTrends(){
   h+='<div class="card"><p class="focus">Krachtprogressie</p>';
   const kr={};
   Object.entries(tr.kracht||{}).forEach(([id,v])=>{ kr[id]={naam:v.naam,punten:v.punten.slice()}; });
-  state.log.entries.filter(x=>(x.type==='gewicht'||(x.type==='ronde'&&x.gewicht!=null))&&!ann.has(x.ts)).forEach(x=>{
+  alleEntries().filter(x=>(x.type==='gewicht'||(x.type==='ronde'&&x.gewicht!=null))&&!ann.has(x.ts)).forEach(x=>{
     const naam=(state.oef[x.oefening]||{}).naam||x.oefening;
     kr[x.oefening]=kr[x.oefening]||{naam,punten:[]};
     if(!kr[x.oefening].punten.some(p=>p.d===x.datum&&p.kg===x.gewicht)) kr[x.oefening].punten.push({d:x.datum,kg:x.gewicht});
@@ -606,7 +615,7 @@ function logParam(id){
 
 function vink(datum){
   const ann=annulled();
-  const s=state.log.entries.find(x=>x.type==='sessie'&&x.datum===datum&&!ann.has(x.ts));
+  const s=alleEntries().find(x=>x.type==='sessie'&&x.datum===datum&&!ann.has(x.ts));
   if(s){ addEntry({type:'annuleer', datum, ref:s.ts}); toast('Afvinken ongedaan gemaakt'); render(); return }
   addEntry({type:'sessie', datum, status:'gedaan'});
   render();
