@@ -315,7 +315,17 @@ function render(){
     h+='</ul>';
   }
   const done = sessieGedaan(d.datum);
-  h+=`<button class="primary${done?' done':''}" onclick="vink('${d.datum}')">${done?'✓ Sessie gedaan':'Sessie afvinken'}</button></div>`;
+  h+=`<button class="primary${done?' done':''}" onclick="vink('${d.datum}')">${done?'✓ Sessie gedaan':'Sessie afvinken'}</button>`;
+  if(d.type==='lopen'||d.type==='golf'){
+    const annS=annulled();
+    const sl=alleEntries().filter(x=>x.type==='stoplicht'&&x.datum===d.datum&&!annS.has(x.ts));
+    const laatst=sl[sl.length-1];
+    h+=`<div class="sec">Knie-stoplicht na de sessie</div>`;
+    if(laatst) h+=`<div class="hist">Gelogd: ${laatst.kleur} ${laatst.score}/10 — opnieuw ingeven om te corrigeren.</div>`;
+    h+=`<div class="logrow"><input id="slIn-${d.datum}" type="number" inputmode="numeric" min="0" max="10" placeholder="kniepijn 0–10">
+      <button class="ghost" onclick="logStoplicht('${d.datum}')">Opslaan</button></div>`;
+  }
+  h+='</div>';
   main.innerHTML=h;
 }
 /* ---------- eiwit ---------- */
@@ -570,13 +580,13 @@ function renderTrends(){
   const perDagK={};
   alleEntries().filter(x=>x.type==='eiwit'&&!ann.has(x.ts)&&x.kcal!=null).forEach(x=>{ perDagK[x.datum]=(perDagK[x.datum]||0)+x.kcal; });
   const liveK=Object.keys(perDagK).filter(d=>!kzien.has(d)).map(d=>({d,g:Math.round(perDagK[d])}));
-  const kcalR=histK.concat(liveK).sort((a,b)=>a.d<b.d?-1:1).slice(-14);
+  const kcalR=histK.concat(liveK).filter(p=>p.g>=500).sort((a,b)=>a.d<b.d?-1:1).slice(-14);
   h+=`<div class="card"><p class="focus">Calorieën per dag</p><div class="meta">laatste 14 dagen</div>
     ${spark(kcalR.map(p=>({y:p.g,l:dl(p.d)})),{doel:state.schema.kcalDoel||2200})}</div>`;
   // caloriebalans: inname − Garmin-verbruik
   const vbA=((tr.verbruik)||{}).punten||[];
   const balP=[];
-  kcalR.forEach(p=>{ const v=vbA.find(x=>x.d===p.d); if(v) balP.push({d:p.d, g:p.g-v.v}); });
+  kcalR.forEach(p=>{ const v=vbA.find(x=>x.d===p.d); if(v && v.v>=1500 && p.d!==localDate()) balP.push({d:p.d, g:p.g-v.v}); });
   if(balP.length) h+=`<div class="card"><p class="focus">Caloriebalans per dag</p><div class="meta">inname − verbruik (Garmin) · richtdoel −400</div>
     ${spark(balP.map(p=>({y:p.g,l:dl(p.d)})),{doel:-400})}</div>`;
   // krachtprogressie
@@ -588,13 +598,34 @@ function renderTrends(){
     kr[x.oefening]=kr[x.oefening]||{naam,punten:[]};
     if(!kr[x.oefening].punten.some(p=>p.d===x.datum&&p.kg===x.gewicht)) kr[x.oefening].punten.push({d:x.datum,kg:x.gewicht});
   });
+  alleEntries().filter(x=>x.type==='ronde'&&!ann.has(x.ts)).forEach(x=>{
+    if(!kr[x.oefening]){
+      const naam=(state.oef[x.oefening]||{}).naam||x.oefening;
+      kr[x.oefening]={naam,punten:[]};
+    }
+  });
   const ids=Object.keys(kr);
-  if(!ids.length) h+='<div class="hist">Log gewichten bij je oefeningen — hier verschijnt je progressie.</div>';
+  if(!ids.length) h+='<div class="hist">Log rondes bij je oefeningen — hier verschijnt je progressie.</div>';
   ids.forEach(id=>{
     const v=kr[id]; v.punten.sort((a,b)=>a.d<b.d?-1:1);
     const l=v.punten[v.punten.length-1];
-    h+=`<div class="sec">${v.naam} — ${l.kg} kg</div>`;
-    h+= v.punten.length>1? spark(v.punten.map(p=>({y:p.kg,l:dl(p.d)}))) : '<div class="hist">1 meting — grafiek volgt bij de volgende</div>';
+    const ex2=state.oef[id]||{};
+    h+=`<div class="sec">${v.naam}${l? ' — '+l.kg+' kg':''}</div>`;
+    const rs=rondeEntries(id);
+    if(rs.length){
+      const ld=rs[rs.length-1].datum;
+      const dag=rs.filter(r=>r.datum===ld);
+      h+=`<div class="hist">Laatste sessie (${dl(ld)}): ${dag.length} ronde${dag.length>1?'s':''} — ${dag.map(r=>(r.reps!=null? r.reps+(ex2.meting==='sec'?' sec':'×'):'')+(r.variant? ' '+r.variant:'')+(r.gewicht!=null? ' @'+r.gewicht+' kg':'')).join(' · ')}</div>`;
+    }
+    if(v.punten.length>1){
+      h+=spark(v.punten.map(p=>({y:p.kg,l:dl(p.d)})));
+    } else {
+      const perDagR={};
+      rs.forEach(r=>{ if(r.reps!=null) perDagR[r.datum]=Math.max(perDagR[r.datum]||0,r.reps); });
+      const rp=Object.keys(perDagR).sort().map(d2=>({y:perDagR[d2],l:dl(d2)}));
+      if(rp.length>1) h+='<div class="meta">beste '+(ex2.meting==='sec'?'seconden':'herhalingen')+' per sessie</div>'+spark(rp);
+      else if(!rs.length && l) h+='<div class="hist">1 meting — grafiek volgt bij de volgende</div>';
+    }
   });
   h+='</div>';
   // weekoverzicht (vult de nachtelijke taak)
@@ -613,6 +644,14 @@ function logParam(id){
   render();
 }
 
+function logStoplicht(datum){
+  const v=parseFloat(document.getElementById('slIn-'+datum).value);
+  if(isNaN(v)||v<0||v>10){ toast('Geef een score van 0 tot 10'); return }
+  const kleur= v<=3?'🟢':(v<=5?'🟠':'🔴');
+  addEntry({type:'stoplicht', datum, score:v, kleur});
+  toast('Stoplicht gelogd: '+kleur+' '+v+'/10');
+  render();
+}
 function vink(datum){
   const ann=annulled();
   const s=alleEntries().find(x=>x.type==='sessie'&&x.datum===datum&&!ann.has(x.ts));
