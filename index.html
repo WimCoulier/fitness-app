@@ -167,46 +167,44 @@ function b64(s){ return btoa(unescape(encodeURIComponent(s))) }
 
 /* ---------- data laden ---------- */
 async function refresh(force){
+  // Elke databron valt onafhankelijk terug op cache bij een fout — één mislukte stap
+  // (bv. de log-sync) mag nooit al het andere, al wél vers opgehaalde, overschrijven.
+  let schemaOk = false;
   try{
     const [schema, oef] = await Promise.all([ getJson('weekschema.json'), getJson('oefeningen.json') ]);
     state.schema = schema; state.oef = oef.oefeningen;
     LS.setItem('cache.schema', JSON.stringify(schema));
     LS.setItem('cache.oef', JSON.stringify(oef.oefeningen));
-    try{ state.voeding = await getJson('voeding.json'); LS.setItem('cache.voeding', JSON.stringify(state.voeding)); }
-    catch(e){ state.voeding = JSON.parse(LS.getItem('cache.voeding')||'null'); }
-    try{ state.trends = await getJson('trends.json'); LS.setItem('cache.trends', JSON.stringify(state.trends)); }
-    catch(e){ state.trends = JSON.parse(LS.getItem('cache.trends')||'null'); }
-    try{ state.params = await getJson('parameters.json'); LS.setItem('cache.params', JSON.stringify(state.params)); }
-    catch(e){ state.params = JSON.parse(LS.getItem('cache.params')||'null'); }
-    let remote;
-    try{ remote = await getJson('logs/'+schema.id+'.json') }
-    catch(e){ remote = {schema:schema.id, entries:[]} }
-    // lokaal bewaarde entries (cache, oude wachtrij, huidige sessie) samenvoegen — niets gaat verloren
-    try{ const c=JSON.parse(LS.getItem('cache.log')); if(c && c.schema===schema.id) mergeEntries(remote.entries, c.entries); }catch(e){}
-    try{ mergeEntries(remote.entries, JSON.parse(LS.getItem('queue'))||[]); }catch(e){}
-    if(state.log && state.log.schema===schema.id) mergeEntries(remote.entries, state.log.entries);
-    state.log = remote;
-    LS.setItem('cache.log', JSON.stringify(state.log));
-    if(schema.vorigeWeek){
-      try{ state.oudLog = await getJson('logs/'+schema.vorigeWeek+'.json'); LS.setItem('cache.oudlog', JSON.stringify(state.oudLog)); }
-      catch(e){ state.oudLog = JSON.parse(LS.getItem('cache.oudlog')||'null'); }
-    } else { state.oudLog = null; }
-    await flushQueue();
-    render(); if(force) toast('Schema bijgewerkt');
+    schemaOk = true;
   }catch(e){
-    // offline of fout → cache gebruiken
     const s = LS.getItem('cache.schema');
-    if(s){ state.schema=JSON.parse(s); state.oef=JSON.parse(LS.getItem('cache.oef')||'{}');
-           state.voeding=JSON.parse(LS.getItem('cache.voeding')||'null');
-           state.trends=JSON.parse(LS.getItem('cache.trends')||'null');
-           state.params=JSON.parse(LS.getItem('cache.params')||'null');
-           state.oudLog=JSON.parse(LS.getItem('cache.oudlog')||'null');
-           state.log=JSON.parse(LS.getItem('cache.log')||'{"entries":[]}');
-           render(); toast('Offline — cache gebruikt'); }
+    if(s){ state.schema=JSON.parse(s); state.oef=JSON.parse(LS.getItem('cache.oef')||'{}'); }
     else if(String(e).includes('401')||String(e).includes('404')){
       LS.removeItem('cfg'); boot(); setupErr.textContent='Verbinding mislukt ('+e.message+'). Controleer gegevens/token.';
-    } else { toast('Kan schema niet laden'); }
+      return;
+    } else { toast('Kan schema niet laden'); return; }
   }
+  try{ state.voeding = await getJson('voeding.json'); LS.setItem('cache.voeding', JSON.stringify(state.voeding)); }
+  catch(e){ state.voeding = JSON.parse(LS.getItem('cache.voeding')||'null'); }
+  try{ state.trends = await getJson('trends.json'); LS.setItem('cache.trends', JSON.stringify(state.trends)); }
+  catch(e){ state.trends = JSON.parse(LS.getItem('cache.trends')||'null'); }
+  try{ state.params = await getJson('parameters.json'); LS.setItem('cache.params', JSON.stringify(state.params)); }
+  catch(e){ state.params = JSON.parse(LS.getItem('cache.params')||'null'); }
+  let remote;
+  try{ remote = await getJson('logs/'+state.schema.id+'.json') }
+  catch(e){ remote = {schema:state.schema.id, entries:[]} }
+  // lokaal bewaarde entries (cache, oude wachtrij, huidige sessie) samenvoegen — niets gaat verloren
+  try{ const c=JSON.parse(LS.getItem('cache.log')); if(c && c.schema===state.schema.id) mergeEntries(remote.entries, c.entries); }catch(e){}
+  try{ mergeEntries(remote.entries, JSON.parse(LS.getItem('queue'))||[]); }catch(e){}
+  try{ if(state.log && state.log.schema===state.schema.id) mergeEntries(remote.entries, state.log.entries); }catch(e){}
+  state.log = remote;
+  try{ LS.setItem('cache.log', JSON.stringify(state.log)); }catch(e){}
+  if(state.schema.vorigeWeek){
+    try{ state.oudLog = await getJson('logs/'+state.schema.vorigeWeek+'.json'); LS.setItem('cache.oudlog', JSON.stringify(state.oudLog)); }
+    catch(e){ state.oudLog = JSON.parse(LS.getItem('cache.oudlog')||'null'); }
+  } else { state.oudLog = null; }
+  try{ await flushQueue(); }catch(e){}
+  render(); if(force) toast(schemaOk? 'Schema bijgewerkt' : 'Offline — cache gebruikt (schema)');
 }
 
 /* ---------- loggen (offline-bestendig: lokaal log = bron, sync = samenvoegen) ---------- */
