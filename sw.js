@@ -1,7 +1,7 @@
 // Minimale service worker: maakt de app installeerbaar en cachet de app-schil.
 // Data (weekschema/logs) gaat NIET via deze cache — die haalt de app zelf op
 // via de GitHub API en bewaart ze in localStorage.
-const CACHE = 'training-shell-v1';
+const CACHE = 'training-shell-v2';
 const SHELL = ['./', 'index.html', 'manifest.json', 'icon.svg'];
 
 self.addEventListener('install', e => {
