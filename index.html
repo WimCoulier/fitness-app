@@ -104,6 +104,7 @@
       <button id="swT" class="on" onclick="setView('training')">Training</button>
       <button id="swE" onclick="setView('eiwit')">Voeding</button>
       <button id="swR" onclick="setView('trends')">Trends</button>
+      <button class="ghost" style="margin-left:6px" onclick="openNotitieSheet()">✎</button>
     </div>
   </header>
   <div class="tabs" id="tabs"></div>
@@ -119,7 +120,7 @@
 
 <script>
 const LS = localStorage;
-const state = { schema:null, oef:null, voeding:null, trends:null, params:null, log:{entries:[]}, dagIdx:0, view:'training', voedingDag:null, oudLog:null };
+const state = { schema:null, oef:null, voeding:null, trends:null, params:null, notities:null, log:{entries:[]}, dagIdx:0, view:'training', voedingDag:null, oudLog:null };
 
 /* ---------- config ---------- */
 function cfg(){ try{ return JSON.parse(LS.getItem('cfg'))||null }catch(e){ return null } }
@@ -190,6 +191,8 @@ async function refresh(force){
   catch(e){ state.trends = JSON.parse(LS.getItem('cache.trends')||'null'); }
   try{ state.params = await getJson('parameters.json'); LS.setItem('cache.params', JSON.stringify(state.params)); }
   catch(e){ state.params = JSON.parse(LS.getItem('cache.params')||'null'); }
+  try{ state.notities = await getJson('notities.json'); LS.setItem('cache.notities', JSON.stringify(state.notities)); }
+  catch(e){ state.notities = JSON.parse(LS.getItem('cache.notities')||'null'); }
   let remote;
   try{ remote = await getJson('logs/'+state.schema.id+'.json') }
   catch(e){ remote = {schema:state.schema.id, entries:[]} }
@@ -323,6 +326,11 @@ function render(){
     h+=`<div class="logrow"><input id="slIn-${d.datum}" type="number" inputmode="numeric" min="0" max="10" placeholder="kniepijn 0–10">
       <button class="ghost" onclick="logStoplicht('${d.datum}')">Opslaan</button></div>`;
   }
+  const dnTxt = dagNotitieTekst(d.datum);
+  h+=`<div class="sec">Commentaar (voor de nachtelijke run)</div>
+    <div class="logrow"><input id="dn-${d.datum}" placeholder="bv. knie voelde stijf · deze dag ging niet · rustige week gewenst" value="${esc(dnTxt)}">
+    <button class="ghost" onclick="logDagNotitie('${d.datum}')">Opslaan</button></div>
+    <div class="hist">Extra context die de 06:00-sync meeneemt bij de schema-update.</div>`;
   h+='</div>';
   main.innerHTML=h;
 }
@@ -658,6 +666,85 @@ function vink(datum){
   render();
 }
 
+/* ---------- notities & dagnotities (input voor de nachtelijke run) ---------- */
+function openNotitieSheet(){
+  const n = lsNotities();
+  let h=`<button class="xclose" type="button" onclick="closeSheet()">✕</button>
+    <h2>✎ Notitie voor de nachtelijke run</h2>
+    <div class="sec">Waar gaat het over?</div>
+    <div class="logrow"><input id="nDag" type="date" value="${localDate()}" onchange=""></div>
+    <div class="sec">Opmerking / schema-aanpassing</div>
+    <div class="logrow"><textarea id="nTekst" rows="3" style="width:100%;resize:vertical" placeholder="bv. deze zaterdag uitstap — verplaats de rustdag van zondag naar zaterdag."></textarea></div>
+    <div class="hist">De nachtelijke run (06:00) leest deze en past het schema zo nodig aan. Alleen het <b>veld 'Opmerking'</b> telt als instructie.</div>
+    <button class="primary" type="button" onclick="saveNotitie()">Opslaan</button>
+    <button class="ghost" type="button" style="width:100%;margin-top:8px" onclick="closeSheet()">Annuleren</button>`;
+  if(n && n.length){
+    h+=`<div class="sec">In afwachting / ontvangen</div>`+
+      n.filter(x=>(x.status||'open')!=='verwerkt').slice(0,5).map(x=>
+        `<div class="entry"><span>${(x.datum||'')} · ${esc(x.tekst)}</span><span class="hist" style="opacity:.7">${x.status||'open'}</span></div>`).join('');
+  }
+  sheet.innerHTML=h;
+  sheetWrap.style.display='block';
+}
+function lsNotities(){
+  return (state.notities&&state.notities.notities)||[];
+}
+function esc(s){ return String(s||'').replace(/"/g,'&quot;').replace(/</g,'&lt;') }
+function saveNotitie(){
+  const tekst=document.getElementById('nTekst').value.trim();
+  if(!tekst){ toast('Schrijf eerst je opmerking'); return }
+  const dag=document.getElementById('nDag').value||localDate();
+  const nt={id:Date.now().toString(36), tekst, datum:dag, aangemaakt:new Date().toISOString(), status:'open'};
+  const arr=lsNotities();
+  arr.push(nt);
+  state.notities={versie:new Date().toISOString().slice(0,10), notities:arr};
+  LS.setItem('cache.notities', JSON.stringify(state.notities));
+  LS.setItem('queue.notities', JSON.stringify(arr));
+  saveNotitiesRemote();
+  toast('Notitie opgeslagen — nachtelijke run past het schema aan ✓', false, 3500);
+  closeSheet(); render();
+}
+let nFlushing=false, nFlushAgain=false;
+async function saveNotitiesRemote(){
+  if(!state.notities||!cfg()) return;
+  if(nFlushing){ nFlushAgain=true; return }
+  nFlushing=true;
+  try{
+    // merge lokale (pending) notities met de remote — behoud verwerkt-statussen van de nachtelijke run
+    let remote = {versie:new Date().toISOString().slice(0,10), notities:[]};
+    try{ remote = await getJson('notities.json'); }catch(e){}
+    const pending = JSON.parse(LS.getItem('queue.notities')||'[]');
+    remote.notities = remote.notities||[];
+    pending.forEach(n=>{
+      const bestaand = remote.notities.findIndex(r=>r.id===n.id);
+      if(bestaand>=0){
+        // vervang inhoud maar behoud cron-status
+        const o=remote.notities[bestaand];
+        remote.notities[bestaand] = Object.assign({}, o, {tekst:n.tekst, datum:n.datum});
+        if(!o.status || o.status==='open') remote.notities[bestaand].status=n.status||'open';
+      } else remote.notities.push(n);
+    });
+    await putJson('notities.json', remote, 'App notitie '+new Date().toISOString().slice(0,16));
+    LS.setItem('queue.notities','[]');
+    state.notities = remote; LS.setItem('cache.notities', JSON.stringify(remote));
+    toast('Notitie gesynchroniseerd ✓');
+  }catch(e){ toast('Notitie offline bewaard — probeert opnieuw', true, 5000) }
+  nFlushing=false;
+  if(nFlushAgain){ nFlushAgain=false; saveNotitiesRemote(); }
+}
+function dagNotitieTekst(datum){
+  const ann=annulled();
+  const e=alleEntries().filter(x=>x.type==='dagnotitie'&&x.datum===datum&&!ann.has(x.ts));
+  return e.length? e[e.length-1].tekst : '';
+}
+function logDagNotitie(datum){
+  const v=document.getElementById('dn-'+datum).value.trim();
+  dagNotitieTekst(datum);
+  addEntry({type:'dagnotitie', datum, tekst:v});
+  toast('Commentaar opgeslagen — meegenomen bij de schema-update ✓');
+  render();
+}
+
 /* ---------- detail sheet (oefening + rondes) ---------- */
 let curEx=null, curDatum=null, curVariant=null, rondeBewerkTs=null;
 function fmtRonde(r, ex){
@@ -773,8 +860,8 @@ function boot(){
   refresh().then(()=>{ if(state.schema){ state.dagIdx=vandaagIdx(); render(); } });
 }
 boot();
-window.addEventListener('online', flushQueue);
-setInterval(flushQueue, 60000);
+window.addEventListener('online', ()=>{ flushQueue(); saveNotitiesRemote(); });
+setInterval(()=>{ flushQueue(); saveNotitiesRemote(); }, 60000);
 if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
 </script>
 </body>
