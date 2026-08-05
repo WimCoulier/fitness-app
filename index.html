@@ -710,24 +710,38 @@ async function saveNotitiesRemote(){
   if(nFlushing){ nFlushAgain=true; return }
   nFlushing=true;
   try{
-    // merge lokale (pending) notities met de remote — behoud verwerkt-statussen van de nachtelijke run
-    let remote = {versie:new Date().toISOString().slice(0,10), notities:[]};
-    try{ remote = await getJson('notities.json'); }catch(e){}
+    // ALTIJD remote als basis: lees de huidige (authoritatieve) notities.json.
+    // Merge lokale (pending) notities erbovenop — en VERWIJDER NOOIT remote-entries.
+    // Kritiek: als de remote-lees faalt, schrijven we NIET (anders clobberen we remote met leeg).
+    let remote;
+    try{ remote = await getJson('notities.json'); }
+    catch(e){
+      // remote niet leesbaar -> NIET schrijven (voorkomt dat we de bestaande notities wissen);
+      // lokale pending blijven in de queue en komen op een later moment alsnog.
+      nFlushing=false; if(nFlushAgain){ nFlushAgain=false; saveNotitiesRemote(); }
+      return;
+    }
+    remote = remote||{versie:new Date().toISOString().slice(0,10), notities:[]};
+    remote.notities = Array.isArray(remote.notities)? remote.notities : [];
     const pending = JSON.parse(LS.getItem('queue.notities')||'[]');
-    remote.notities = remote.notities||[];
-    pending.forEach(n=>{
-      const bestaand = remote.notities.findIndex(r=>r.id===n.id);
-      if(bestaand>=0){
-        // vervang inhoud maar behoud cron-status
-        const o=remote.notities[bestaand];
-        remote.notities[bestaand] = Object.assign({}, o, {tekst:n.tekst, datum:n.datum});
-        if(!o.status || o.status==='open') remote.notities[bestaand].status=n.status||'open';
-      } else remote.notities.push(n);
-    });
-    await putJson('notities.json', remote, 'App notitie '+new Date().toISOString().slice(0,16));
-    LS.setItem('queue.notities','[]');
-    state.notities = remote; LS.setItem('cache.notities', JSON.stringify(remote));
-    toast('Notitie gesynchroniseerd ✓');
+    if(pending.length){
+      pending.forEach(n=>{
+        const bestaand = remote.notities.findIndex(r=>r.id===n.id);
+        if(bestaand>=0){
+          // vervang inhoud maar behoud cron-status
+          const o=remote.notities[bestaand];
+          remote.notities[bestaand] = Object.assign({}, o, {tekst:n.tekst, datum:n.datum});
+          if(!o.status || o.status==='open') remote.notities[bestaand].status=n.status||'open';
+        } else {
+          remote.notities.push(n);
+        }
+      });
+      await putJson('notities.json', remote, 'App notitie '+new Date().toISOString().slice(0,16));
+      LS.setItem('queue.notities','[]');
+      state.notities = remote; LS.setItem('cache.notities', JSON.stringify(remote));
+      toast('Notitie gesynchroniseerd ✓');
+    }
+    // als er geen pending is: niets schrijven, remote-status is dan al up-to-date
   }catch(e){ toast('Notitie offline bewaard — probeert opnieuw', true, 5000) }
   nFlushing=false;
   if(nFlushAgain){ nFlushAgain=false; saveNotitiesRemote(); }
