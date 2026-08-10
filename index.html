@@ -541,10 +541,11 @@ function bewaarEiwitBewerk(){
 function annuleer(ts){ addEntry({type:'annuleer', datum:localDate(), ref:ts}); render(); }
 
 /* ---------- trends ---------- */
-const sparkState={prev:null};
+const sparkState={prev:null,tip:null};
 function sparkTip(c, datum, val, eenheid){
   const svg=c.ownerSVGElement;
-  svg.querySelectorAll('.sparktip').forEach(t=>t.remove());
+  // vorige tooltip altijd weg (directe referentie, niet via class-matching — betrouwbaarder op SVG)
+  if(sparkState.tip && sparkState.tip.isConnected){ try{ sparkState.tip.remove(); }catch(e){} }
   if(sparkState.prev && sparkState.prev.isConnected){ sparkState.prev.setAttribute('r',3.5); sparkState.prev.removeAttribute('stroke'); sparkState.prev.removeAttribute('stroke-width'); }
   sparkState.prev=c;
   c.setAttribute('r',7); c.setAttribute('stroke','var(--card)'); c.setAttribute('stroke-width','3');
@@ -555,11 +556,12 @@ function sparkTip(c, datum, val, eenheid){
   const ty=cy-14, tw=label.length*5.5;
   const tx=Math.max(24,Math.min(W-24-tw/2,cx));
   const txt=document.createElementNS(ns,'text');
-  txt.className='sparktip';
+  txt.setAttribute('class','sparktip');
   txt.setAttribute('x',tx); txt.setAttribute('y',ty); txt.setAttribute('text-anchor','middle');
   txt.setAttribute('font-size','10'); txt.setAttribute('font-weight','bold'); txt.setAttribute('fill','var(--text)');
   txt.textContent=label;
   svg.appendChild(txt);
+  sparkState.tip=txt;
 }
 function dlJy(d){ return d.slice(8)+'/'+d.slice(5,7)+'/'+d.slice(2,4); }
 function spark(punten, opts={}){
