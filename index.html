@@ -167,6 +167,26 @@ async function putJson(path, obj, msg, poging=0){
 function b64(s){ return btoa(unescape(encodeURIComponent(s))) }
 
 /* ---------- data laden ---------- */
+// Laad ALLE historische logbestanden (niet alleen vorigeWeek). Zo toont "Vorige keer"-prestatie
+// en de trends altijd de recentste sessie, ook al woont die in een ouder logbestand dan vorigeweek.
+async function loadHistLogs(){
+  const out={schema:'hist', entries:[]};
+  let names=[];
+  try{
+    const r=await api('logs/',{raw:false});
+    if(r.ok){ const arr=await r.json(); names=(Array.isArray(arr)? arr:[]).map(x=>x.name).filter(n=>/\.json$/.test(n)); }
+  }catch(e){}
+  const cur=(state.schema&&state.schema.id)||null;
+  for(const n of names.slice().sort()){
+    if(n.replace(/\.json$/,'')===cur) continue; // huidige week zit al in state.log
+    try{
+      const j=await getJson('logs/'+n);
+      if(j && Array.isArray(j.entries)) mergeEntries(out.entries, j.entries);
+    }catch(e){}
+  }
+  if(out.entries.length){ LS.setItem('cache.oudlog', JSON.stringify(out)); return out; }
+  try{ return JSON.parse(LS.getItem('cache.oudlog')||'null'); }catch(e){ return null; }
+}
 async function refresh(force){
   // Elke databron valt onafhankelijk terug op cache bij een fout — één mislukte stap
   // (bv. de log-sync) mag nooit al het andere, al wél vers opgehaalde, overschrijven.
@@ -202,10 +222,7 @@ async function refresh(force){
   try{ if(state.log && state.log.schema===state.schema.id) mergeEntries(remote.entries, state.log.entries); }catch(e){}
   state.log = remote;
   try{ LS.setItem('cache.log', JSON.stringify(state.log)); }catch(e){}
-  if(state.schema.vorigeWeek){
-    try{ state.oudLog = await getJson('logs/'+state.schema.vorigeWeek+'.json'); LS.setItem('cache.oudlog', JSON.stringify(state.oudLog)); }
-    catch(e){ state.oudLog = JSON.parse(LS.getItem('cache.oudlog')||'null'); }
-  } else { state.oudLog = null; }
+  try{ state.oudLog = await loadHistLogs(); }catch(e){ state.oudLog = null; }
   try{ await flushQueue(); }catch(e){}
   render(); if(force) toast(schemaOk? 'Schema bijgewerkt' : 'Offline — cache gebruikt (schema)');
 }
@@ -563,7 +580,7 @@ function spark(punten, opts={}){
     s+=`<polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`;
   }
   punten.forEach((p,i)=>{
-    const v=p.y, d=opts.full? dlJy(p.d) : dl(p.d);
+    const v=p.y, d=(p.d&&p.d.length>=10)? (opts.full? dlJy(p.d):dl(p.d)) : (p.l||'');
     s+=`<circle cx="${X(i).toFixed(1)}" cy="${Y(p.y).toFixed(1)}" r="3.5" fill="var(--accent)" style="cursor:pointer" onclick="sparkTip(this,'${d}','${v}',${eh? `'${eh}'`:"''"})"><title>${v}${eh} · ${d}</title></circle>`;
   });
   const f=punten[0], l=punten[punten.length-1];
