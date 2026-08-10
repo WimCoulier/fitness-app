@@ -524,9 +524,30 @@ function bewaarEiwitBewerk(){
 function annuleer(ts){ addEntry({type:'annuleer', datum:localDate(), ref:ts}); render(); }
 
 /* ---------- trends ---------- */
+const sparkState={prev:null};
+function sparkTip(c, datum, val, eenheid){
+  const svg=c.ownerSVGElement;
+  svg.querySelectorAll('.sparktip').forEach(t=>t.remove());
+  if(sparkState.prev && sparkState.prev.isConnected){ sparkState.prev.setAttribute('r',3.5); sparkState.prev.removeAttribute('stroke'); sparkState.prev.removeAttribute('stroke-width'); }
+  sparkState.prev=c;
+  c.setAttribute('r',7); c.setAttribute('stroke','var(--card)'); c.setAttribute('stroke-width','3');
+  const cx=parseFloat(c.getAttribute('cx')), cy=parseFloat(c.getAttribute('cy'));
+  const vb=svg.getAttribute('viewBox').split(' '); const W=parseFloat(vb[2]);
+  const label=val+eenheid+' · '+datum;
+  const ns='http://www.w3.org/2000/svg';
+  const ty=cy-14, tw=label.length*5.5;
+  const tx=Math.max(24,Math.min(W-24-tw/2,cx));
+  const txt=document.createElementNS(ns,'text');
+  txt.className='sparktip';
+  txt.setAttribute('x',tx); txt.setAttribute('y',ty); txt.setAttribute('text-anchor','middle');
+  txt.setAttribute('font-size','10'); txt.setAttribute('font-weight','bold'); txt.setAttribute('fill','var(--text)');
+  txt.textContent=label;
+  svg.appendChild(txt);
+}
+function dlJy(d){ return d.slice(8)+'/'+d.slice(5,7)+'/'+d.slice(2,4); }
 function spark(punten, opts={}){
   if(!punten.length) return '<div class="hist">nog geen data</div>';
-  const W=300,H=110,P=16;
+  const W=300,H=110,P=16, eh=opts.eenheid||'';
   const ys=punten.map(p=>p.y);
   let min=Math.min(...ys), max=Math.max(...ys);
   if(opts.doel!=null){ min=Math.min(min,opts.doel); max=Math.max(max,opts.doel); }
@@ -541,7 +562,10 @@ function spark(punten, opts={}){
     const pts=punten.map((p,i)=>X(i).toFixed(1)+','+Y(p.y).toFixed(1)).join(' ');
     s+=`<polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`;
   }
-  punten.forEach((p,i)=>{ s+=`<circle cx="${X(i).toFixed(1)}" cy="${Y(p.y).toFixed(1)}" r="3.5" fill="var(--accent)"/>`; });
+  punten.forEach((p,i)=>{
+    const v=p.y, d=opts.full? dlJy(p.d) : dl(p.d);
+    s+=`<circle cx="${X(i).toFixed(1)}" cy="${Y(p.y).toFixed(1)}" r="3.5" fill="var(--accent)" style="cursor:pointer" onclick="sparkTip(this,'${d}','${v}',${eh? `'${eh}'`:"''"})"><title>${v}${eh} · ${d}</title></circle>`;
+  });
   const f=punten[0], l=punten[punten.length-1];
   s+=`<text x="${P}" y="${H-2}" fill="var(--muted)" font-size="9">${f.l||''}</text>
     <text x="${W-P}" y="${H-2}" fill="var(--muted)" font-size="9" text-anchor="end">${l.l||''}</text>
@@ -566,7 +590,7 @@ function renderTrends(){
     const reeks=hist.concat(extra,live).sort((a,b)=>a.d<b.d?-1:1);
     h+=`<div class="card"><p class="focus">${pa.naam}</p>
       <div class="meta">${reeks.length? 'laatste: '+reeks[reeks.length-1].v+' '+pa.eenheid:'nog geen meting'}${pa.doel!=null? ' · doel '+pa.doel+' '+pa.eenheid:''}</div>
-      ${spark(reeks.map(p=>({y:p.v,l:dl(p.d)})),{doel:pa.doel})}
+      ${spark(reeks.map(p=>({y:p.v,l:dl(p.d),d:p.d})),{doel:pa.doel,eenheid:pa.eenheid,full:true})}
       <div class="logrow"><input id="pIn-${pa.id}" type="number" inputmode="decimal" step="0.1" placeholder="${pa.eenheid}">
       <button class="ghost" onclick="logParam('${pa.id}')">Opslaan</button></div>
       ${pa.tip? '<div class="hist">'+pa.tip+'</div>':''}</div>`;
@@ -579,7 +603,7 @@ function renderTrends(){
   const liveE=Object.keys(perDag).filter(d=>!eseen.has(d)).map(d=>({d,g:Math.round(perDag[d])}));
   const eiw=histE.concat(liveE).sort((a,b)=>a.d<b.d?-1:1).slice(-14);
   h+=`<div class="card"><p class="focus">Eiwit per dag</p><div class="meta">laatste 14 dagen</div>
-    ${spark(eiw.map(p=>({y:p.g,l:dl(p.d)})),{doel:state.schema.eiwitDoel||130})}</div>`;
+    ${spark(eiw.map(p=>({y:p.g,l:dl(p.d),d:p.d})),{doel:state.schema.eiwitDoel||130,eenheid:'g'})}</div>`;
   // calorieën per dag
   const histK=(tr.kcal&&tr.kcal.punten)||[];
   const kzien=new Set(histK.map(p=>p.d));
@@ -588,13 +612,13 @@ function renderTrends(){
   const liveK=Object.keys(perDagK).filter(d=>!kzien.has(d)).map(d=>({d,g:Math.round(perDagK[d])}));
   const kcalR=histK.concat(liveK).filter(p=>p.g>=500).sort((a,b)=>a.d<b.d?-1:1).slice(-14);
   h+=`<div class="card"><p class="focus">Calorieën per dag</p><div class="meta">laatste 14 dagen</div>
-    ${spark(kcalR.map(p=>({y:p.g,l:dl(p.d)})),{doel:state.schema.kcalDoel||2200})}</div>`;
+    ${spark(kcalR.map(p=>({y:p.g,l:dl(p.d),d:p.d})),{doel:state.schema.kcalDoel||2200,eenheid:' kcal'})}</div>`;
   // caloriebalans: inname − Garmin-verbruik
   const vbA=((tr.verbruik)||{}).punten||[];
   const balP=[];
   kcalR.forEach(p=>{ const v=vbA.find(x=>x.d===p.d); if(v && v.v>=1500 && p.d!==localDate()) balP.push({d:p.d, g:p.g-v.v}); });
   if(balP.length) h+=`<div class="card"><p class="focus">Caloriebalans per dag</p><div class="meta">inname − verbruik (Garmin) · richtdoel −400</div>
-    ${spark(balP.map(p=>({y:p.g,l:dl(p.d)})),{doel:-400})}</div>`;
+    ${spark(balP.map(p=>({y:p.g,l:dl(p.d),d:p.d})),{doel:-400,eenheid:' kcal'})}</div>`;
   // krachtprogressie
   h+='<div class="card"><p class="focus">Krachtprogressie</p>';
   const kr={};
@@ -624,12 +648,13 @@ function renderTrends(){
       h+=`<div class="hist">Laatste sessie (${dl(ld)}): ${dag.length} ronde${dag.length>1?'s':''} — ${dag.map(r=>(r.reps!=null? r.reps+(ex2.meting==='sec'?' sec':'×'):'')+(r.variant? ' '+r.variant:'')+(r.gewicht!=null? ' @'+r.gewicht+' kg':'')).join(' · ')}</div>`;
     }
     if(v.punten.length>1){
-      h+=spark(v.punten.map(p=>({y:p.kg,l:dl(p.d)})));
+      h+=spark(v.punten.map(p=>({y:p.kg,l:dl(p.d),d:p.d})),{eenheid:' kg',full:true});
     } else {
       const perDagR={};
       rs.forEach(r=>{ if(r.reps!=null) perDagR[r.datum]=Math.max(perDagR[r.datum]||0,r.reps); });
-      const rp=Object.keys(perDagR).sort().map(d2=>({y:perDagR[d2],l:dl(d2)}));
-      if(rp.length>1) h+='<div class="meta">beste '+(ex2.meting==='sec'?'seconden':'herhalingen')+' per sessie</div>'+spark(rp);
+      const rp=Object.keys(perDagR).sort().map(d2=>({y:perDagR[d2],l:dl(d2),d:d2}));
+      const rph=ex2.meting==='sec'?'s':'reps';
+      if(rp.length>1) h+='<div class="meta">beste '+(ex2.meting==='sec'?'seconden':'herhalingen')+' per sessie</div>'+spark(rp,{eenheid:' '+rph,full:true});
       else if(!rs.length && l) h+='<div class="hist">1 meting — grafiek volgt bij de volgende</div>';
     }
   });
