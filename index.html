@@ -79,7 +79,6 @@
   #setup input{width:100%; background:var(--card); border:1px solid var(--line); border-radius:12px;
       color:var(--text); padding:12px; font-size:1rem}
   .note{font-size:.8rem; color:var(--muted); line-height:1.5; margin-top:14px}
-  .stoplicht{font-size:.8rem; color:var(--muted); line-height:1.6; padding:0 4px}
   .err{color:var(--red); font-size:.85rem; margin-top:10px}
 </style>
 </head>
@@ -109,7 +108,7 @@
   </header>
   <div class="tabs" id="tabs"></div>
   <main id="main"></main>
-  <div class="stoplicht" id="stoplicht"></div>
+
   <main><button class="ghost" style="width:100%" onclick="refresh(true)">↻ Schema herladen</button></main>
 </div>
 
@@ -303,8 +302,7 @@ function render(){
   document.getElementById('swE').className = state.view==='eiwit'?'on':'';
   document.getElementById('swR').className = state.view==='trends'?'on':'';
   tabs.style.display = state.view==='training' ? 'flex':'none';
-  stoplicht.style.display = state.view==='training' ? 'block':'none';
-  stoplicht.textContent = state.schema.stoplicht||'';
+
   if(state.view==='eiwit'){ renderEiwit(); return; }
   if(state.view==='trends'){ renderTrends(); return; }
   tabs.innerHTML='';
@@ -334,18 +332,9 @@ function render(){
   }
   const done = sessieGedaan(d.datum);
   h+=`<button class="primary${done?' done':''}" onclick="vink('${d.datum}')">${done?'✓ Sessie gedaan':'Sessie afvinken'}</button>`;
-  if(d.type==='lopen'||d.type==='golf'){
-    const annS=annulled();
-    const sl=alleEntries().filter(x=>x.type==='stoplicht'&&x.datum===d.datum&&!annS.has(x.ts));
-    const laatst=sl[sl.length-1];
-    h+=`<div class="sec">Knie-stoplicht na de sessie</div>`;
-    if(laatst) h+=`<div class="hist">Gelogd: ${laatst.kleur} ${laatst.score}/10 — opnieuw ingeven om te corrigeren.</div>`;
-    h+=`<div class="logrow"><input id="slIn-${d.datum}" type="number" inputmode="numeric" min="0" max="10" placeholder="kniepijn 0–10">
-      <button class="ghost" onclick="logStoplicht('${d.datum}')">Opslaan</button></div>`;
-  }
   const dnTxt = dagNotitieTekst(d.datum);
   h+=`<div class="sec">Commentaar (voor de nachtelijke run)</div>
-    <div class="logrow"><input id="dn-${d.datum}" placeholder="bv. knie voelde stijf · deze dag ging niet · rustige week gewenst" value="${esc(dnTxt)}">
+    <div class="logrow"><input id="dn-${d.datum}" placeholder="bv. deze dag ging niet · zware week · rustige week gewenst" value="${esc(dnTxt)}">
     <button class="ghost" onclick="logDagNotitie('${d.datum}')">Opslaan</button></div>
     <div class="hist">Extra context die de 06:00-sync meeneemt bij de schema-update.</div>`;
   h+='</div>';
@@ -694,14 +683,6 @@ function logParam(id){
   render();
 }
 
-function logStoplicht(datum){
-  const v=parseFloat(document.getElementById('slIn-'+datum).value);
-  if(isNaN(v)||v<0||v>10){ toast('Geef een score van 0 tot 10'); return }
-  const kleur= v<=3?'🟢':(v<=5?'🟠':'🔴');
-  addEntry({type:'stoplicht', datum, score:v, kleur});
-  toast('Stoplicht gelogd: '+kleur+' '+v+'/10');
-  render();
-}
 function vink(datum){
   const ann=annulled();
   const s=alleEntries().find(x=>x.type==='sessie'&&x.datum===datum&&!ann.has(x.ts));
